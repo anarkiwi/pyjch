@@ -130,6 +130,49 @@ def _frozen_grid(tune_id):
     return rows
 
 
+def grid_from_writes(writes):
+    """Frame an in-memory ``[(clock, reg, val), ...]`` write-stream.
+
+    A pure-stdlib copy of deplayroutine's ``oracle.grid_from_writes``: it
+    anchors frame 0 to the first play call (the first write after a
+    ``> 10000``-cycle gap), uses the leading init writes as frame 0's
+    baseline, forward-fills, and nibble-masks the PW-high registers.  This
+    is the surface deplayroutine's ``cross_check_oracle_grid`` validates
+    pyjch through.
+    """
+    if not writes:
+        return []
+    return _grid_from_writes([(c, r, v) for c, r, v in writes])
+
+
+def aligned_match(oracle, rendered, max_lead=4):
+    """deplayroutine's ``validate``: align over <= max_lead leading silent
+    frames; return (ok, lead, divergence)."""
+    if not rendered:
+        return False, 0, (0, 0, -1, -1)
+    baseline = rendered[0]
+    best = None
+    for lead in range(max_lead + 1):
+        if lead and (lead > len(rendered) or rendered[lead - 1] != baseline):
+            break
+        aligned = rendered[lead : lead + len(oracle)]
+        if len(aligned) < len(oracle):
+            best = best or ("short", lead)
+            continue
+        div = None
+        for frame in range(len(oracle)):
+            for reg in range(NREG):
+                if oracle[frame][reg] != aligned[frame][reg]:
+                    div = (frame, reg, oracle[frame][reg], aligned[frame][reg])
+                    break
+            if div:
+                break
+        if div is None:
+            return True, lead, None
+        best = best or div
+    return False, 0, best
+
+
 @pytest.fixture
 def oracle_grid(tune_id, tune_path):
     """Ground-truth grid: live sidtrace if available, else the frozen grid."""

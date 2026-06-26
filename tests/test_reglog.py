@@ -9,16 +9,27 @@ from pyjch.errors import JCHError
 
 
 def test_iter_register_writes_clocking(tune_path):
-    """Clocks advance by cycles_per_frame across frames, write_spacing within."""
+    """An init baseline burst at clock 0, then play calls one frame later.
+
+    The init->play gap must exceed one frame so an oracle framer anchors
+    frame 0 to the first play call (never to a later run of silent frames).
+    """
     song = reader.read(tune_path)
     writes = list(reglog.iter_register_writes(song, max_frames=4))
     assert writes
     assert all(isinstance(w, reglog.RegWrite) for w in writes)
-    # The first frame writes all 25 registers at frame clock 0.
-    frame0 = [w for w in writes if w.clock < constants.PAL_CYCLES_PER_FRAME]
-    assert len(frame0) == constants.SID_REGISTERS
-    assert frame0[0].clock == 0
-    assert frame0[1].clock == reglog.DEFAULT_WRITE_SPACING
+    # The init burst writes all 25 registers at clock 0..spacing*24.
+    init = [w for w in writes if w.clock < constants.PAL_CYCLES_PER_FRAME]
+    assert len(init) == constants.SID_REGISTERS
+    assert init[0].clock == 0
+    assert init[1].clock == reglog.DEFAULT_WRITE_SPACING
+    # The first play call is one full frame later (a > one-frame gap).
+    first_play = min(
+        w.clock for w in writes if w.clock >= constants.PAL_CYCLES_PER_FRAME
+    )
+    assert first_play == constants.PAL_CYCLES_PER_FRAME
+    gap = first_play - init[-1].clock
+    assert gap > 10000
 
 
 def test_write_spacing_guard(tune_path):
@@ -67,3 +78,24 @@ def test_read_reglog_non_integer():
 def test_read_reglog_rejects_unknown_source():
     with pytest.raises(TypeError):
         reglog.read_reglog(42)
+
+
+def test_reglog_grid_matches_oracle(tune_id, tune_path, oracle_grid):
+    """The reglog write-stream, framed by deplayroutine's grid_from_writes,
+    matches the committed oracle grid byte-exact -- the surface
+    deplayroutine's cross_check_oracle_grid validates pyjch through."""
+    from tests.conftest import aligned_match, grid_from_writes
+
+    oracle, source = oracle_grid
+    song = reader.read(tune_path)
+    writes = [
+        (w.clock, w.reg, w.val)
+        for w in reglog.iter_register_writes(song, max_frames=len(oracle) + 6)
+    ]
+    rendered = grid_from_writes(writes)
+    ok, lead, div = aligned_match(oracle, rendered)
+    assert ok, (
+        f"{tune_id}: reglog grid not byte-exact (oracle {source}); "
+        f"divergence {div} at lead 0"
+    )
+    assert lead <= 4

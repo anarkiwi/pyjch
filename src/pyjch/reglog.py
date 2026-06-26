@@ -15,7 +15,7 @@ from typing import IO, Iterable, Iterator, NamedTuple
 from pyjch import constants
 from pyjch.errors import JCHError
 from pyjch.model import Song
-from pyjch.player import iter_frames
+from pyjch.player import Player
 
 # Cycles between consecutive writes within one frame, approximating the
 # store instructions of the 6502 playroutine.
@@ -40,15 +40,30 @@ def iter_register_writes(
 ) -> Iterator[RegWrite]:
     """Yield :class:`RegWrite` for ``song``, frame by frame.
 
+    The write-stream mirrors how the player actually runs on a C64, so it
+    frames identically to the ``preframr-sidtrace`` oracle: the ``init``
+    routine's SID register baseline is emitted once at clock 0, then each
+    ``play`` call follows one frame later (a ``> cycles_per_frame`` gap, so
+    an oracle framer anchors frame 0 to the first play call and uses the
+    init writes as frame 0's baseline -- never mistaking a run of silent
+    play frames for the init gap).
+
     The JCH player loops forever, so ``max_frames`` bounds the log
     (default one minute at 50 Hz).  Writes within a frame are spaced
-    ``write_spacing`` cycles from the frame boundary; frames are
+    ``write_spacing`` cycles from the frame boundary; play frames are
     ``cycles_per_frame`` apart.
     """
     if write_spacing * constants.SID_REGISTERS >= cycles_per_frame:
         raise JCHError("write_spacing too large for one frame")
-    for frame, writes in enumerate(iter_frames(song, max_frames=max_frames)):
-        clock = frame * cycles_per_frame
+    player = Player(song)
+    # init baseline burst at clock 0 (the post-init SID register file).
+    for offset, val in enumerate(player.regs):
+        yield RegWrite(offset * write_spacing, offset, val)
+    # play calls start one frame later, so the init->play gap exceeds one
+    # frame and the oracle framing anchors frame 0 to the first play call.
+    for frame in range(max_frames):
+        writes = player.play_frame()
+        clock = (frame + 1) * cycles_per_frame
         for offset, (reg, val) in enumerate(writes):
             yield RegWrite(clock + offset * write_spacing, reg, val)
 
