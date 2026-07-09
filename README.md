@@ -6,6 +6,27 @@ demoscene). It parses a JCH tune into a typed song model and runs the
 playroutine to produce byte-exact per-frame SID register output, plus a
 register-log surface for downstream tooling.
 
+**Coverage (three tiers):**
+
+* **Byte-exact V0x player** — the canonical `JCH_NewPlayer_V0x` layout
+  (Flexible, Simple_Tune): `parse` returns a `Song` the player replays
+  register-for-register.
+* **Byte-exact V20 player** — the `JCH_NewPlayer_V20` two-column wavetable
+  engine (largest HVSC bucket): `pyjch.v20player.V20Player` replays the 1,324
+  tunes that are the V20 code build, each validated frame-exact against a py65
+  register oracle. `pyjch.v20player.playable(model)` is the soundness gate.
+* **Model reader** — the remaining JCH NewPlayer *wavetable family*
+  (`sidid` V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and V20 sub-builds,
+  ~2,000 HVSC tunes): `parse` returns a `NewPlayerModel` recovering the song
+  DATA (subtune/order-list/pattern/instrument tables) directly from the image.
+  These versions run a different player opcode stream, so playback is **not**
+  byte-exact-verified.
+
+A few genuinely different players (V3/V4/V7/V19, `Glover_NewPlayer_V21`,
+`Dane_NewPlayer`, `JCH_DigiPlayer`) and packed/relocated tunes are cleanly
+**rejected** rather than mis-parsed. See
+[docs/versions.md](docs/versions.md) for the full per-version HVSC census.
+
 Everything (read/play/register-log) is **pure stdlib** — no dependencies.
 
 ```bash
@@ -52,20 +73,28 @@ pyjch reglog tune.sid tune.reglog --seconds 30
 ## The JCH NewPlayer format
 
 Three independent per-voice opcode streams. The player binary is identical
-across tunes; only its DATA and the addresses that data lives at differ, so
-the reader **discovers** each per-tune immediate and table base from the
-player code's instruction operands (relocation-safe — no fixed-address
-assumption):
+across tunes of the canonical version; only its DATA and the addresses that
+data lives at differ, so the reader **discovers** each per-tune immediate and
+table base by matching the surrounding instruction bytes (an idiom search —
+relocation-safe *and* robust to per-tune code shifts a fixed offset cannot
+survive):
 
-- **AD/SR defaults** — `image[load+0xAA]` / `image[load+0xB5]`.
-- **Gate-on / gate-off (rest) CTRL** — `image[load+0x1E1]` /
-  `image[load+0x199]`.
-- **Subpattern pointer-table bases** — the 16-bit operands at
-  `load+0x12C` (lo) / `load+0x131` (hi).
+- **AD/SR defaults** — the immediates in `LDA #imm ; STA $D405` / `... $D406`.
+- **Gate-off / gate-on CTRL** — the two immediates in `LDA #imm ; STA $D404,Y`.
+- **Subpattern pointer-table bases** — the operands in `LDA abs,Y ; STA $fb`
+  (lo) / `... $fc` (hi).
 - **Orderlist pointers** — three per-voice pairs at `$1010`, indexed by
   `subtune * 8`; the 7th byte seeds the tempo.
 - **Frequency tables** — `$121F` (lo) / `$1220` (hi), 0x80 entries, indexed
   by note with a per-voice transpose.
+
+When these V0x idioms are absent, `parse` falls back to the **wavetable-family
+model reader** (`pyjch.newplayer`), which discovers the family table bases —
+subtune table, pattern-pointer low/high, instrument records, and (where
+present) wavetable note column / pitch table — by their own idioms and returns
+a `NewPlayerModel` if the recovered song is coherent (order lists walk to a
+terminator through in-range pattern pointers). If neither layout is
+recoverable, `parse` raises `SidParseError`.
 
 Init (`FUN_1060`) copies the orderlist pointer pairs into per-voice
 cur/base pointers, loads the tempo, and seeds the SID registers. Play
@@ -89,11 +118,17 @@ PW-hi registers nibble-masked):
 ## Tests
 
 Test tunes are HVSC copyright works and are **never committed**. They are
-resolved from a local HVSC tree (`$JCH_LOCAL_HVSC`) or fetched on demand
-(`python scripts/fetch_tunes.py`) into a gitignored cache; the byte-exact
-tests validate against the live `preframr-sidtrace` binary when
+resolved from a local HVSC tree (`$HVSC` or `$JCH_LOCAL_HVSC`) or fetched on
+demand (`python scripts/fetch_tunes.py`) into a gitignored cache; the
+byte-exact tests validate against the live `preframr-sidtrace` binary when
 `$SIDTRACE_BIN` is set, else against the committed frozen oracle grids in
 `tests/fixtures/`, so CI passes with neither the binary nor the tunes.
+
+`tests/test_corpus.py` drives one deterministic representative of every JCH
+NewPlayer version in HVSC (see [docs/versions.md](docs/versions.md)): the
+supported tunes must parse and be recognised, every other version must be
+cleanly rejected. It runs for real when `$HVSC` points at a local tree and
+skips per-tune otherwise.
 
 ```bash
 pip install -e ".[dev]"

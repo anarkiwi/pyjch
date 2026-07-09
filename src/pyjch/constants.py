@@ -21,16 +21,14 @@ SID_OFFSET = (0, 7, 14)
 # Pulse-width high registers carry only their low nibble (12-bit pulse).
 PW_HI_REGS = (0x03, 0x0A, 0x11)
 
-# Per-tune operand offsets-from-load.  The player binary is identical
-# across JCH tunes, so each per-tune immediate / pointer-table base lives
-# at a fixed offset in the code; the reader reads the byte (or 16-bit
-# operand) there to discover the per-tune value (relocation-safe).
-OP_INIT_AD = 0x0AA  # LDA #imm @ $10AA -> attack/decay default
-OP_INIT_SR = 0x0B5  # LDA #imm @ $10B5 -> sustain/release default
-OP_GATEOFF_CTRL = 0x199  # LDA #imm @ $1198 -> gate-off / rest CTRL
-OP_GATE_CTRL = 0x1E1  # LDA #imm @ $11E0 -> gate-on CTRL
-OP_SUBPTR_LO = 0x12C  # LDA abs,Y operand @ $112B -> subpattern ptr lo base
-OP_SUBPTR_HI = 0x131  # LDA abs,Y operand @ $1130 -> subpattern ptr hi base
+# Per-tune immediates and pointer-table bases live in the player code as
+# instruction operands.  The reader locates them by their surrounding
+# instruction bytes (a ``pysidtracker`` ``CodePattern`` masked search) rather
+# than by a fixed
+# offset, so discovery survives both relocation and the small per-tune code
+# shifts a fixed offset cannot.  For reference, the canonical (load $1000,
+# Flexible/Simple_Tune) offsets are: AD @+0xAA, SR @+0xB5, gate-off @+0x199,
+# gate-on @+0x1E1, subptr-lo @+0x12C, subptr-hi @+0x131.
 
 # Fixed in-image work / data addresses the player reads (absolute, relative
 # to load; the player binary places them at the same offsets across tunes).

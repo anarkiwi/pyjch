@@ -1,7 +1,9 @@
 """Exceptions raised by pyjch."""
 
+from pysidtracker import SidError
 
-class JCHError(Exception):
+
+class JCHError(SidError):
     """Base class for all pyjch errors."""
 
 

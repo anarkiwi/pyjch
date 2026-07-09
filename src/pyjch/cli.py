@@ -3,18 +3,23 @@
 import argparse
 import sys
 
-from pyjch import reglog
-from pyjch.errors import JCHError
+from pyjch import reglog, v20player
+from pyjch.errors import JCHError, SidParseError
+from pyjch.model import Song
+from pyjch.newplayer import NewPlayerModel
 from pyjch.reader import read
 
 
-def _info(args) -> None:
-    song = read(args.song)
+def _info_common(song) -> None:
     print(f"name:        {song.name}")
     print(f"author:      {song.author}")
     print(f"released:    {song.released}")
     print(f"load:        ${song.load_addr:04X}")
     print(f"init/play:   ${song.init_addr:04X} / ${song.play_addr:04X}")
+
+
+def _info_v0x(song: Song) -> None:
+    print("player:      JCH_NewPlayer_V0x (byte-exact)")
     print(f"AD/SR:       ${song.init_ad:02X} / ${song.init_sr:02X}")
     print(f"gate on/off: ${song.gate_ctrl:02X} / ${song.gateoff_ctrl:02X}")
     print(f"subptr lo/hi:${song.subptr_lo:04X} / ${song.subptr_hi:04X}")
@@ -23,8 +28,36 @@ def _info(args) -> None:
         print(f"  voice {voice}: orderlist @ ${addr:04X}")
 
 
+def _info_family(song: NewPlayerModel) -> None:
+    if v20player.playable(song) is not None:
+        print("player:      JCH NewPlayer V20 (byte-exact)")
+    else:
+        print(f"player:      JCH NewPlayer family ({song.version}); model recovered")
+    print(f"subtune tbl: ${song.subtune_table:04X}")
+    print(f"pattern ptr: ${song.patternptr_lo:04X} / ${song.patternptr_hi:04X}")
+    print(f"instruments: ${song.instruments:04X}")
+    for voice in range(3):
+        addr = song.orderlist_ptr(0, voice)
+        print(f"  voice {voice}: orderlist @ ${addr:04X}")
+
+
+def _info(args) -> None:
+    song = read(args.song)
+    _info_common(song)
+    if isinstance(song, NewPlayerModel):
+        _info_family(song)
+    else:
+        _info_v0x(song)
+
+
 def _reglog(args) -> None:
     song = read(args.song)
+    if isinstance(song, NewPlayerModel) and v20player.playable(song) is None:
+        raise SidParseError(
+            f"{song.version}: song model recovered, but byte-exact playback is "
+            "not supported for this JCH NewPlayer family version "
+            "(byte-exact players: V0x, V20)"
+        )
     frames = round(args.seconds * 50)
     writes = reglog.iter_register_writes(song, max_frames=frames)
     reglog.write_reglog(writes, args.output)
