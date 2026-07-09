@@ -9,63 +9,51 @@ the per-tune values (relocation-safe -- no fixed-address assumption), then
 exposes the orderlist pointers, frequency tables and subpattern tables.
 """
 
-import struct
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Optional, Tuple
+
+from pysidtracker import BaseSidParser, SidImage
+from pysidtracker import SidParseError as _BaseSidParseError
 
 from pyjch import constants
 from pyjch.errors import SidParseError
 from pyjch.model import Song
-
-_PSID_HEADER = struct.Struct(">4sHHHHHHHI")  # magic..speed
-
-
-def _read_cstr(raw: bytes) -> str:
-    return raw.split(b"\0", 1)[0].decode("latin-1")
 
 
 def _parse_container(
     data: bytes,
 ) -> Tuple[int, int, int, str, str, str, bytes, bytes]:
     """Return (load, init, play, name, author, released, image, header)."""
-    magic = data[:4]
-    if magic in (b"PSID", b"RSID"):
-        if len(data) < _PSID_HEADER.size:
-            raise SidParseError("truncated PSID/RSID header")
-        _m, _ver, data_off, load, init, play, _songs, _start, _speed = (
-            _PSID_HEADER.unpack_from(data, 0)
+    try:
+        img = SidImage.from_bytes(data)
+    except _BaseSidParseError as exc:
+        raise SidParseError(str(exc)) from exc
+    header = img.header
+    if header is None:
+        # Bare .prg: 2-byte little-endian load address + image.
+        return (
+            img.load,
+            constants.DEFAULT_INIT,
+            constants.DEFAULT_PLAY,
+            "",
+            "",
+            "",
+            img.image,
+            img.container,
         )
-        name = _read_cstr(data[22:54])
-        author = _read_cstr(data[54:86])
-        released = _read_cstr(data[86:118])
-        body = data[data_off:]
-        if load == 0:  # load address is the first 2 bytes of the body
-            if len(body) < 2:
-                raise SidParseError("truncated PSID body")
-            load = body[0] | (body[1] << 8)
-            header = data[: data_off + 2]
-            image = body[2:]
-        else:
-            header = data[:data_off]
-            image = body
-        if init == 0:
-            init = load
-        if play == 0:
-            play = load
-        return load, init, play, name, author, released, image, header
-    # Bare .prg: 2-byte little-endian load address + image.
-    if len(data) < 2:
-        raise SidParseError("truncated .prg image")
-    load = data[0] | (data[1] << 8)
+    load = img.load
+    # Header init/play of 0 mean "same as load" for JCH NewPlayer tunes.
+    init = header.init_address or load
+    play = header.play_address or load
     return (
         load,
-        constants.DEFAULT_INIT,
-        constants.DEFAULT_PLAY,
-        "",
-        "",
-        "",
-        data[2:],
-        data[:2],
+        init,
+        play,
+        header.name,
+        header.author,
+        header.released,
+        img.image,
+        img.container,
     )
 
 
@@ -130,3 +118,26 @@ def read(src) -> Song:
     if hasattr(src, "read"):
         return parse(src.read())
     raise TypeError(f"cannot read a song from {type(src).__name__}")
+
+
+class JchSidParser(BaseSidParser):
+    """:class:`~pysidtracker.BaseSidParser` adapter for the JCH NewPlayer.
+
+    Gives the JCH reader the shared ``read``/``parse``/``detect`` surface. JCH
+    has no fixed absolute magic -- its note-frequency table lives at a
+    load-relative offset -- so no reliable static :meth:`recognize` anchor
+    exists and :meth:`detect` falls back to the default.
+    """
+
+    error_class: type = SidParseError
+
+    def parse(self, data: bytes, **kwargs: Any) -> Song:
+        """Decode raw ``.sid``/``.prg`` ``data`` into a :class:`~pyjch.model.Song`."""
+        return parse(data, **kwargs)
+
+    def recognize(  # pylint: disable=unused-argument
+        self, image: SidImage
+    ) -> Optional[object]:
+        # No fixed absolute anchor (the JCH frequency table is load-relative);
+        # a robust static recogniser is not available, so defer to the default.
+        return None
