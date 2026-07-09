@@ -25,11 +25,28 @@ jobs:
         run: black --check src/pyjch tests scripts
       - name: pylint
         run: pylint src/pyjch tests scripts
+      - name: Cache HVSC corpus tunes
+        # Tunes are HVSC copyright works, never committed; they are fetched from
+        # the public HVSC mirror into a gitignored cache and reused across runs.
+        # Keyed on the files that define the corpus + the fetch script, so the
+        # cache re-populates when the tune list changes.
+        uses: actions/cache@v4
+        with:
+          path: tests/.tunecache
+          key: >-
+            hvsc-corpus-${{ hashFiles('tests/test_corpus.py',
+            'tests/test_v20player.py', 'tests/conftest.py',
+            'scripts/fetch_tunes.py') }}
+      - name: Fetch corpus tunes (HVSC mirror; cached)
+        run: python scripts/fetch_tunes.py --corpus
       - name: pytest + coverage (> 85%)
-        # Tunes are HVSC copyright works (never committed); CI has no
-        # SIDTRACE_BIN, so the byte-exact player tests validate against the
-        # committed frozen oracle grids, and tune-dependent tests fetch from
-        # the HVSC mirror (skipping cleanly if the mirror is unreachable).
+        # The real HVSC tunes are now present (fetched + cached), so the corpus
+        # reader tests and the V20 py65 byte-exact oracle tests RUN (not skip),
+        # exercising newplayer.py / v20player.py for real.  V0x byte-exact tests
+        # validate against the committed frozen oracle grids.  PYJCH_FETCH_CORPUS
+        # lets any tune missing from the cache be fetched on demand.
+        env:
+          PYJCH_FETCH_CORPUS: "1"
         run: pytest -n auto --cov=pyjch --cov-report=term-missing --cov-fail-under=85
 
   build:
