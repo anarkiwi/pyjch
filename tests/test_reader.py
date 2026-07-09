@@ -63,10 +63,38 @@ def test_parse_rejects_truncated_prg():
         reader.parse(b"\x00")
 
 
+def _canonical_image(size=0x400):
+    """A minimal image carrying every V0x discovery idiom the reader needs."""
+    image = bytearray(size)
+    idioms = (
+        b"\xa9\x0f\x8d\x05\xd4"  # LDA #$0F ; STA $D405  (attack/decay)
+        b"\xa9\x06\x8d\x06\xd4"  # LDA #$06 ; STA $D406  (sustain/release)
+        b"\xa9\x10\x99\x04\xd4"  # LDA #$10 ; STA $D404,Y (gate-off CTRL)
+        b"\xa9\x21\x99\x04\xd4"  # LDA #$21 ; STA $D404,Y (gate-on CTRL)
+        b"\xb9\x7e\x13\x85\xfb"  # LDA $137E,Y ; STA $FB (subptr-lo base)
+        b"\xb9\x83\x13\x85\xfc"  # LDA $1383,Y ; STA $FC (subptr-hi base)
+    )
+    image[0x40 : 0x40 + len(idioms)] = idioms
+    return bytes(image)
+
+
 def test_parse_prg_load_address():
     """A bare .prg uses its 2-byte little-endian load address."""
-    image = bytes(0x400)
+    image = _canonical_image()
     prg = struct.pack("<H", 0x1000) + image
     song = reader.parse(prg)
     assert song.load_addr == 0x1000
     assert song.image == image
+    assert song.init_ad == 0x0F
+    assert song.init_sr == 0x06
+    assert song.gateoff_ctrl == 0x10
+    assert song.gate_ctrl == 0x21
+    assert song.subptr_lo == 0x137E
+    assert song.subptr_hi == 0x1383
+
+
+def test_parse_rejects_foreign_player():
+    """An image lacking the V0x idioms is rejected, not silently mis-parsed."""
+    prg = struct.pack("<H", 0x1000) + bytes(0x400)
+    with pytest.raises(SidParseError):
+        reader.parse(prg)

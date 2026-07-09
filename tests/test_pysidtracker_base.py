@@ -30,7 +30,8 @@ def test_parser_read_matches_module_parse(tune_path):
     assert from_parser.subptr_hi == from_bytes.subptr_hi
 
 
-def test_parser_detect_falls_back_without_recognizer(tune_path):
-    """No static recognizer -> detect() yields UNKNOWN (no false DIRECT)."""
+def test_parser_detect_recognizes_supported(tune_path):
+    """The canonical V0x signature is recognised -> detect() yields DIRECT."""
     detection = JchSidParser().detect(tune_path, init=False)
-    assert detection.kind is pysidtracker.PlayroutineKind.UNKNOWN
+    assert detection.kind is pysidtracker.PlayroutineKind.DIRECT
+    assert detection.anchor is not None

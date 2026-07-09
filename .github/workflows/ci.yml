@@ -27,12 +27,12 @@ jobs:
         run: black --check src/pyjch tests scripts
       - name: pylint
         run: pylint src/pyjch tests scripts
-      - name: pytest + coverage (> 80%)
+      - name: pytest + coverage (> 85%)
         # Tunes are HVSC copyright works (never committed); CI has no
         # SIDTRACE_BIN, so the byte-exact player tests validate against the
         # committed frozen oracle grids, and tune-dependent tests fetch from
         # the HVSC mirror (skipping cleanly if the mirror is unreachable).
-        run: pytest --cov=pyjch --cov-report=term-missing --cov-fail-under=80
+        run: pytest -n auto --cov=pyjch --cov-report=term-missing --cov-fail-under=85
 
   build:
     runs-on: ubuntu-latest
