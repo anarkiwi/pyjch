@@ -21,14 +21,16 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.1",
+    "pysidtracker>=0.2",
 ]
 
 [project.optional-dependencies]
-# Everything (read/play/register logs) is pure stdlib.
+# Runtime (read/play/register logs) is pure stdlib; py65 is a test-only 6502
+# used to generate the V20 byte-exact register oracle.
 dev = [
     "black>=24",
     "pylint>=3",
+    "py65>=1.1",
     "pytest>=7",
     "pytest-cov>=4",
     "pytest-xdist>=3",

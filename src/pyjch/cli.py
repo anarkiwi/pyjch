@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from pyjch import reglog
+from pyjch import reglog, v20player
 from pyjch.errors import JCHError, SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
@@ -29,7 +29,10 @@ def _info_v0x(song: Song) -> None:
 
 
 def _info_family(song: NewPlayerModel) -> None:
-    print(f"player:      JCH NewPlayer family ({song.version}); model recovered")
+    if v20player.playable(song) is not None:
+        print("player:      JCH NewPlayer V20 (byte-exact)")
+    else:
+        print(f"player:      JCH NewPlayer family ({song.version}); model recovered")
     print(f"subtune tbl: ${song.subtune_table:04X}")
     print(f"pattern ptr: ${song.patternptr_lo:04X} / ${song.patternptr_hi:04X}")
     print(f"instruments: ${song.instruments:04X}")
@@ -49,10 +52,11 @@ def _info(args) -> None:
 
 def _reglog(args) -> None:
     song = read(args.song)
-    if isinstance(song, NewPlayerModel):
+    if isinstance(song, NewPlayerModel) and v20player.playable(song) is None:
         raise SidParseError(
             f"{song.version}: song model recovered, but byte-exact playback is "
-            "not supported for this JCH NewPlayer family version (V0x only)"
+            "not supported for this JCH NewPlayer family version "
+            "(byte-exact players: V0x, V20)"
         )
     frames = round(args.seconds * 50)
     writes = reglog.iter_register_writes(song, max_frames=frames)

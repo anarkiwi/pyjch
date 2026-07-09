@@ -23,7 +23,8 @@ PW_HI_REGS = (0x03, 0x0A, 0x11)
 
 # Per-tune immediates and pointer-table bases live in the player code as
 # instruction operands.  The reader locates them by their surrounding
-# instruction bytes (see ``reader._find_operands``) rather than by a fixed
+# instruction bytes (a ``pysidtracker`` ``CodePattern`` masked search) rather
+# than by a fixed
 # offset, so discovery survives both relocation and the small per-tune code
 # shifts a fixed offset cannot.  For reference, the canonical (load $1000,
 # Flexible/Simple_Tune) offsets are: AD @+0xAA, SR @+0xB5, gate-off @+0x199,

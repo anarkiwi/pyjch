@@ -6,17 +6,21 @@ demoscene). It parses a JCH tune into a typed song model and runs the
 playroutine to produce byte-exact per-frame SID register output, plus a
 register-log surface for downstream tooling.
 
-**Coverage (two tiers):**
+**Coverage (three tiers):**
 
-* **Byte-exact player** — the canonical `JCH_NewPlayer_V0x` layout
+* **Byte-exact V0x player** — the canonical `JCH_NewPlayer_V0x` layout
   (Flexible, Simple_Tune): `parse` returns a `Song` the player replays
   register-for-register.
-* **Model reader** — the later JCH NewPlayer *wavetable family*
-  (`sidid` V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18/V20 and part of
-  V5/V12, ~3,300 HVSC tunes): `parse` returns a `NewPlayerModel` recovering
-  the song DATA (subtune/order-list/pattern/instrument tables) directly from
-  the image. These versions share the V0x data layout (relocated) but a
-  different player opcode stream, so playback is **not** byte-exact-verified.
+* **Byte-exact V20 player** — the `JCH_NewPlayer_V20` two-column wavetable
+  engine (largest HVSC bucket): `pyjch.v20player.V20Player` replays the 1,324
+  tunes that are the V20 code build, each validated frame-exact against a py65
+  register oracle. `pyjch.v20player.playable(model)` is the soundness gate.
+* **Model reader** — the remaining JCH NewPlayer *wavetable family*
+  (`sidid` V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and V20 sub-builds,
+  ~2,000 HVSC tunes): `parse` returns a `NewPlayerModel` recovering the song
+  DATA (subtune/order-list/pattern/instrument tables) directly from the image.
+  These versions run a different player opcode stream, so playback is **not**
+  byte-exact-verified.
 
 A few genuinely different players (V3/V4/V7/V19, `Glover_NewPlayer_V21`,
 `Dane_NewPlayer`, `JCH_DigiPlayer`) and packed/relocated tunes are cleanly

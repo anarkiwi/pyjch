@@ -24,8 +24,9 @@ silently return garbage from a foreign player.  See ``docs/versions.md``.
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-from pysidtracker import BaseSidParser, SidImage
+from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
 from pysidtracker import SidParseError as _BaseSidParseError
+from pysidtracker import find_code_first
 
 from pyjch import constants, newplayer
 from pyjch.errors import SidParseError
@@ -34,8 +35,8 @@ from pyjch.model import Song
 
 def _parse_container(
     data: bytes,
-) -> Tuple[int, int, int, str, str, str, bytes, bytes]:
-    """Return (load, init, play, name, author, released, image, header)."""
+) -> Tuple[int, int, int, str, str, str, bytes, bytes, SidImage]:
+    """Return (load, init, play, name, author, released, image, header, img)."""
     try:
         img = SidImage.from_bytes(data)
     except _BaseSidParseError as exc:
@@ -52,6 +53,7 @@ def _parse_container(
             "",
             img.image,
             img.container,
+            img,
         )
     load = img.load
     # Header init/play of 0 mean "same as load" for JCH NewPlayer tunes.
@@ -66,6 +68,7 @@ def _parse_container(
         header.released,
         img.image,
         img.container,
+        img,
     )
 
 
@@ -75,51 +78,25 @@ def _byte(image: bytes, off: int) -> int:
     raise SidParseError(f"operand offset {off:#x} past end of image")
 
 
-def _find_operands(image: bytes, prefix: bytes, suffix: bytes, oplen: int) -> list:
-    """Every operand framed by ``prefix .. suffix`` (``oplen`` bytes wide, LE).
-
-    Locates the instruction idiom ``prefix<operand>suffix`` and returns each
-    operand as a little-endian integer, in image order.
-    """
-    out = []
-    start = 0
-    step = len(prefix) + oplen + len(suffix)
-    while True:
-        hit = image.find(prefix, start)
-        if hit < 0:
-            break
-        start = hit + 1
-        op_at = hit + len(prefix)
-        if image[op_at + oplen : op_at + oplen + len(suffix)] != suffix:
-            continue
-        if op_at + oplen > len(image):
-            continue
-        value = 0
-        for i in range(oplen):
-            value |= image[op_at + i] << (8 * i)
-        out.append(value)
-        start = hit + step
-    return out
+# Player-code idioms carrying the per-tune values as captured operands (0.2.0
+# ``codescan`` masked patterns; ``{op}`` = immediate byte, ``{op:w}`` = 16-bit LE
+# operand).  The SID store targets are ``$D405``/``$D406`` (AD/SR), ``$D404,Y``
+# (CTRL gate-off then gate-on) and the ``$FB``/``$FC`` zero-page pointer.
+_AD_PAT = CodePattern("A9 {op} 8D 05 D4")  # LDA #imm ; STA $D405 (attack/decay)
+_SR_PAT = CodePattern("A9 {op} 8D 06 D4")  # LDA #imm ; STA $D406 (sustain/release)
+_GATE_PAT = CodePattern("A9 {op} 99 04 D4")  # LDA #imm ; STA $D404,Y (CTRL)
+_SUBLO_PAT = CodePattern("B9 {op:w} 85 FB")  # LDA abs,Y ; STA $FB (ptr-lo base)
+_SUBHI_PAT = CodePattern("B9 {op:w} 85 FC")  # LDA abs,Y ; STA $FC (ptr-hi base)
 
 
-def _one_operand(
-    image: bytes, prefix: bytes, suffix: bytes, oplen: int, what: str
-) -> int:
-    """The first ``prefix<operand>suffix`` operand, or raise if the idiom is absent."""
-    found = _find_operands(image, prefix, suffix, oplen)
-    if not found:
+def _one_operand(img: SidImage, pattern: CodePattern, what: str) -> int:
+    """The first ``pattern`` operand capture, or raise if the idiom is absent."""
+    match = find_code_first(img, pattern)
+    if match is None:
         raise SidParseError(
             f"not a canonical JCH NewPlayer (V0x): {what} idiom not found"
         )
-    return found[0]
-
-
-# Player-code idioms carrying the per-tune values (see module docstring).
-_AD_SUF = b"\x8d\x05\xd4"  # STA $D405 (attack/decay -> voice 0)
-_SR_SUF = b"\x8d\x06\xd4"  # STA $D406 (sustain/release -> voice 0)
-_GATE_SUF = b"\x99\x04\xd4"  # STA $D404,Y (CTRL; gate-off then gate-on)
-_LDA_IMM = b"\xa9"  # LDA #imm
-_LDA_ABSY = b"\xb9"  # LDA abs,Y
+    return match.captures["op"]
 
 
 def _parse_v0x(  # pylint: disable=too-many-arguments
@@ -131,6 +108,7 @@ def _parse_v0x(  # pylint: disable=too-many-arguments
     released: str,
     image: bytes,
     header: bytes,
+    img: SidImage,
 ) -> Song:
     """Parse the canonical ``JCH_NewPlayer_V0x`` layout into a byte-exact Song.
 
@@ -139,17 +117,17 @@ def _parse_v0x(  # pylint: disable=too-many-arguments
     returning meaningless values read out of a different player's code.
     """
     # Per-tune DISCOVERY via instruction idioms (relocation- and shift-safe).
-    init_ad = _one_operand(image, _LDA_IMM, _AD_SUF, 1, "attack/decay init")
-    init_sr = _one_operand(image, _LDA_IMM, _SR_SUF, 1, "sustain/release init")
-    gates = _find_operands(image, _LDA_IMM, _GATE_SUF, 1)
+    init_ad = _one_operand(img, _AD_PAT, "attack/decay init")
+    init_sr = _one_operand(img, _SR_PAT, "sustain/release init")
+    gates = [m.captures["op"] for m in find_code_all(img, _GATE_PAT)]
     if len(gates) < 2:
         raise SidParseError(
             "not a canonical JCH NewPlayer (V0x): gate-on/off CTRL immediates "
             f"not found (need 2, found {len(gates)})"
         )
     gateoff_ctrl, gate_ctrl = gates[0], gates[1]
-    subptr_lo = _one_operand(image, _LDA_ABSY, b"\x85\xfb", 2, "subpattern ptr-lo base")
-    subptr_hi = _one_operand(image, _LDA_ABSY, b"\x85\xfc", 2, "subpattern ptr-hi base")
+    subptr_lo = _one_operand(img, _SUBLO_PAT, "subpattern ptr-lo base")
+    subptr_hi = _one_operand(img, _SUBHI_PAT, "subpattern ptr-hi base")
 
     freq_lo = [
         _byte(image, constants.FREQ_LO + n) for n in range(constants.FREQ_TABLE_LEN)
@@ -191,9 +169,11 @@ def parse(data: bytes):
     Raises :class:`~pyjch.errors.SidParseError` when the image is neither --
     rather than returning meaningless values out of a foreign player's code.
     """
-    load, init, play, name, author, released, image, header = _parse_container(data)
+    load, init, play, name, author, released, image, header, img = _parse_container(
+        data
+    )
     try:
-        return _parse_v0x(load, init, play, name, author, released, image, header)
+        return _parse_v0x(load, init, play, name, author, released, image, header, img)
     except SidParseError as v0x_exc:
         num_subtunes = _subtune_count(data)
         try:
@@ -240,7 +220,7 @@ def read(src):
 # attack/decay default into voices 0 and 1).  The SID register addresses are
 # load-independent, so this anchor survives relocation; empirically it is
 # present in every V0x tune and absent from the other NewPlayer versions.
-_RECOGNIZE_SIG = b"\x8d\x05\xd4\x8d\x0c\xd4"
+_RECOGNIZE_PAT = CodePattern("8D 05 D4 8D 0C D4")
 
 
 class JchSidParser(BaseSidParser):
@@ -264,9 +244,9 @@ class JchSidParser(BaseSidParser):
 
     def recognize(self, image: SidImage) -> Optional[object]:
         """Return a V0x or family anchor address in ``image``, else ``None``."""
-        addr = image.find(_RECOGNIZE_SIG)
-        if addr >= 0:
-            return addr
+        match = find_code_first(image, _RECOGNIZE_PAT)
+        if match is not None:
+            return match.addr
         header = image.header
         init = (header.init_address or image.load) if header else image.load
         play = (header.play_address or image.load) if header else image.load

@@ -12,10 +12,31 @@ import io
 from pathlib import Path
 from typing import IO, Iterable, Iterator, NamedTuple
 
-from pyjch import constants
-from pyjch.errors import JCHError
+from pyjch import constants, v20player
+from pyjch.errors import JCHError, SidParseError
 from pyjch.model import Song
+from pyjch.newplayer import NewPlayerModel
 from pyjch.player import Player
+
+
+def make_player(song):
+    """Return the byte-exact player for ``song``.
+
+    A :class:`~pyjch.model.Song` (canonical V0x) uses :class:`~pyjch.player.Player`;
+    a :class:`~pyjch.newplayer.NewPlayerModel` that is a verified **V20** build
+    (see :func:`pyjch.v20player.playable`) uses :class:`~pyjch.v20player.V20Player`.
+    Any other recovered family model has no byte-exact player yet and raises.
+    """
+    if isinstance(song, NewPlayerModel):
+        if v20player.playable(song) is None:
+            raise SidParseError(
+                f"{song.version}: song model recovered, but byte-exact playback "
+                "is not supported for this JCH NewPlayer family version "
+                "(byte-exact players: V0x, V20)"
+            )
+        return v20player.V20Player(song)
+    return Player(song)
+
 
 # Cycles between consecutive writes within one frame, approximating the
 # store instructions of the 6502 playroutine.
@@ -55,7 +76,7 @@ def iter_register_writes(
     """
     if write_spacing * constants.SID_REGISTERS >= cycles_per_frame:
         raise JCHError("write_spacing too large for one frame")
-    player = Player(song)
+    player = make_player(song)
     # init baseline burst at clock 0 (the post-init SID register file).
     for offset, val in enumerate(player.regs):
         yield RegWrite(offset * write_spacing, offset, val)
