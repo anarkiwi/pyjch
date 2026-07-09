@@ -98,14 +98,18 @@ or `Song` for V0x).
 | `JCH_DigiPlayer` | 3 | 0 | different | rejected |
 
 **Reader coverage: 2 → ~3,324 tunes** (2 V0x byte-exact + 3,322 family models).
-**Byte-exact playback: 2 V0x + 1,324 V20 = 1,326 tunes**, each validated
-frame-exact against a py65 register oracle (V0x against `preframr-sidtrace`; V20
-against `tests/_v20oracle.py`).  Of the 1,737 sidid-`V20` tunes, 1,324 are the
-byte-identical V20 code build that `pyjch.v20player.playable` accepts and replays
-byte-exactly; the remainder are packed/relocated-code rips, or rare sub-builds
-with a different instrument-record layout or a split wave-note column, which are
-gated out and kept at *model recovered; playback not byte-exact-verified* rather
-than mis-played.  The other family versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/
+**Byte-exact playback: 2 V0x + 1,324 V20 = 1,326 tunes.**  Of the 1,737
+sidid-`V20` tunes, 1,324 are the byte-identical V20 code build that
+`pyjch.v20player.playable` accepts; the remainder are packed/relocated-code rips,
+or rare sub-builds with a different instrument-record layout or a split wave-note
+column, which are gated out and kept at *model recovered; playback not
+byte-exact-verified* rather than mis-played.  The V0x player is validated
+frame-exact against `preframr-sidtrace`; the V20 player is validated frame-exact
+against a py65 oracle (`tests/_v20oracle.py`) over a **random ~300-tune sample**
+of the accepted set spanning many authors (100% frame-exact for the full sampled
+horizon, 120–600 frames).  Per-tune verification of every one of the 1,324 is not
+individually asserted — the guarantee is that `playable()` admits only the
+byte-identical V20 build, which the sample validates.  The other family versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/
 V17/V18) are recovered by the shared idiom set plus a per-tune coherence gate and
 carry the same honest model-only label; their player opcode streams differ from
 V20's, so byte-exactness there is not claimed.
