@@ -2,6 +2,7 @@
 
 from pyjch.errors import JCHError, SidParseError
 from pyjch.model import Song
+from pyjch.newplayer import NewPlayerModel
 from pyjch.player import Player, iter_frames, render_grid
 from pyjch.reader import JchSidParser, parse, read
 from pyjch.reglog import (
@@ -16,6 +17,7 @@ __version__ = "0.1.0"
 __all__ = [
     "JCHError",
     "JchSidParser",
+    "NewPlayerModel",
     "Player",
     "RegWrite",
     "SidParseError",

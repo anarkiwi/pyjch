@@ -27,7 +27,7 @@ from typing import Any, Optional, Tuple
 from pysidtracker import BaseSidParser, SidImage
 from pysidtracker import SidParseError as _BaseSidParseError
 
-from pyjch import constants
+from pyjch import constants, newplayer
 from pyjch.errors import SidParseError
 from pyjch.model import Song
 
@@ -122,16 +122,22 @@ _LDA_IMM = b"\xa9"  # LDA #imm
 _LDA_ABSY = b"\xb9"  # LDA abs,Y
 
 
-def parse(data: bytes) -> Song:
-    """Parse JCH NewPlayer tune bytes (PSID/RSID/.sid or .prg) into a Song.
+def _parse_v0x(  # pylint: disable=too-many-arguments
+    load: int,
+    init: int,
+    play: int,
+    name: str,
+    author: str,
+    released: str,
+    image: bytes,
+    header: bytes,
+) -> Song:
+    """Parse the canonical ``JCH_NewPlayer_V0x`` layout into a byte-exact Song.
 
-    Raises :class:`~pyjch.errors.SidParseError` when the image is not the
-    canonical ``JCH_NewPlayer_V0x`` layout this player models (the discovery
-    idioms are absent) -- rather than returning meaningless values read out of
-    a different player's code.
+    Raises :class:`~pyjch.errors.SidParseError` when the image is not the V0x
+    layout this player models (the discovery idioms are absent) -- rather than
+    returning meaningless values read out of a different player's code.
     """
-    load, init, play, name, author, released, image, header = _parse_container(data)
-
     # Per-tune DISCOVERY via instruction idioms (relocation- and shift-safe).
     init_ad = _one_operand(image, _LDA_IMM, _AD_SUF, 1, "attack/decay init")
     init_sr = _one_operand(image, _LDA_IMM, _SR_SUF, 1, "sustain/release init")
@@ -173,7 +179,53 @@ def parse(data: bytes) -> Song:
     )
 
 
-def read(src) -> Song:
+def parse(data: bytes):
+    """Parse a JCH NewPlayer tune (PSID/RSID/.sid or .prg) into its model.
+
+    Returns a :class:`~pyjch.model.Song` for the canonical, byte-exact-replay
+    ``JCH_NewPlayer_V0x`` layout, or a :class:`~pyjch.newplayer.NewPlayerModel`
+    for the later wavetable-family versions (V1/V2/V3/V6/V8/V9/V10/V11/V13/
+    V14/V15/V17/V18/V20) whose song DATA this reader recovers (playback not
+    byte-exact-verified; see :mod:`pyjch.newplayer`).
+
+    Raises :class:`~pyjch.errors.SidParseError` when the image is neither --
+    rather than returning meaningless values out of a foreign player's code.
+    """
+    load, init, play, name, author, released, image, header = _parse_container(data)
+    try:
+        return _parse_v0x(load, init, play, name, author, released, image, header)
+    except SidParseError as v0x_exc:
+        num_subtunes = _subtune_count(data)
+        try:
+            return newplayer.recover(
+                load,
+                init,
+                play,
+                name,
+                author,
+                released,
+                image,
+                header,
+                version=newplayer.classify_version(load, image, play),
+                num_subtunes=num_subtunes,
+            )
+        except SidParseError as family_exc:
+            raise SidParseError(
+                f"not a supported JCH NewPlayer tune: {v0x_exc}; {family_exc}"
+            ) from family_exc
+
+
+def _subtune_count(data: bytes) -> int:
+    """Number of subtunes from the PSID/RSID header (1 for a bare .prg)."""
+    try:
+        img = SidImage.from_bytes(data)
+    except _BaseSidParseError:
+        return 1
+    header = img.header
+    return getattr(header, "songs", 1) or 1 if header is not None else 1
+
+
+def read(src):
     """Read a JCH NewPlayer tune from a path, bytes, or file-like object."""
     if isinstance(src, bytes):
         return parse(src)
@@ -195,19 +247,27 @@ class JchSidParser(BaseSidParser):
     """:class:`~pysidtracker.BaseSidParser` adapter for the JCH NewPlayer.
 
     Gives the JCH reader the shared ``read``/``parse``/``detect`` surface.
-    :meth:`recognize` anchors on the canonical ``JCH_NewPlayer_V0x`` init
-    signature (a load-independent SID-register store idiom), so :meth:`detect`
-    classifies a supported tune as ``DIRECT`` and reports ``UNKNOWN`` for the
-    foreign NewPlayer versions this player does not model.
+    :meth:`recognize` anchors on either the canonical ``JCH_NewPlayer_V0x``
+    init signature (a load-independent SID-register store idiom) or a coherent
+    NewPlayer wavetable-family layout, so :meth:`detect` classifies a tune whose
+    song model this reader recovers statically as ``DIRECT`` and reports
+    ``UNKNOWN`` for foreign players / unrecoverable versions.  ``DIRECT`` here
+    means the song model is recovered directly from the loaded image; it does
+    not assert byte-exact replay of the family versions (only V0x is that).
     """
 
     error_class: type = SidParseError
 
-    def parse(self, data: bytes, **kwargs: Any) -> Song:
-        """Decode raw ``.sid``/``.prg`` ``data`` into a :class:`~pyjch.model.Song`."""
+    def parse(self, data: bytes, **kwargs: Any):
+        """Decode raw ``.sid``/``.prg`` ``data`` into its recovered song model."""
         return parse(data, **kwargs)
 
     def recognize(self, image: SidImage) -> Optional[object]:
-        """Return the canonical V0x signature address in ``image``, else ``None``."""
+        """Return a V0x or family anchor address in ``image``, else ``None``."""
         addr = image.find(_RECOGNIZE_SIG)
-        return addr if addr >= 0 else None
+        if addr >= 0:
+            return addr
+        header = image.header
+        init = (header.init_address or image.load) if header else image.load
+        play = (header.play_address or image.load) if header else image.load
+        return newplayer.recognize(image.load, image.image, init, play)

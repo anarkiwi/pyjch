@@ -1,26 +1,28 @@
 """Real-HVSC corpus test for the JCH NewPlayer reader.
 
-pyjch models one player: the canonical ``JCH_NewPlayer_V0x`` layout (immediate
-attack/decay + sustain/release init, immediate gate-on/gate-off CTRL, split
-subpattern pointer tables).  HVSC contains at least twenty *other* JCH
-``NewPlayer`` binaries (``sidid`` tags V1..V21, ``Glover_NewPlayer_V21`` and
-``JCH_DigiPlayer``); they are genuinely different players -- their init does not
-seed AD/SR from immediates at all -- so this reader must **reject** them rather
-than read garbage out of a foreign player's code.
+pyjch reads two tiers of JCH NewPlayer tune:
 
-This test drives that contract against a real HVSC tree:
+* the canonical **``JCH_NewPlayer_V0x``** layout, which the byte-exact player
+  replays (validated against the ``preframr-sidtrace`` oracle) -- ``parse``
+  returns a :class:`~pyjch.model.Song`;
+* the later **wavetable family** (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18/
+  V20), whose *song DATA* the version-aware reader recovers directly from the
+  loaded image -- ``parse`` returns a :class:`~pyjch.newplayer.NewPlayerModel`.
+  Playback of these versions is not byte-exact-verified; the contract tested
+  here is that the recovered **model is coherent** (table bases in range, order
+  lists terminate through in-range pattern pointers, an instrument record is
+  present), never garbage.
 
-* every supported (V0x-canonical) tune parses, is recognised, and is detected
-  ``DIRECT``;
-* a deterministic representative of every other version is rejected with a
-  clear :class:`~pyjch.errors.SidParseError` and is *not* recognised.
+A handful of genuinely different players (V3/V4/V5/V7/V12/V19, Glover's and
+Dane's forks, the DigiPlayer) use a different data layout the reader cannot
+recover; they must be cleanly **rejected**, not mis-parsed.
 
 Tunes are HVSC copyright works, never committed.  Each tune is resolved from a
 local HVSC tree (``$HVSC`` or ``$JCH_LOCAL_HVSC``) or the gitignored fetch
 cache; set ``PYJCH_FETCH_CORPUS=1`` to allow on-demand download.  A tune that
 cannot be resolved is skipped, so the suite passes offline and runs for real
 when ``$HVSC`` points at a local tree.  See ``docs/versions.md`` for the full
-per-version HVSC census this sample is drawn from.
+per-version HVSC census.
 """
 
 import os
@@ -31,6 +33,8 @@ import pytest
 
 from pyjch import reader
 from pyjch.errors import SidParseError
+from pyjch.model import Song
+from pyjch.newplayer import NewPlayerModel
 from pyjch.reader import JchSidParser
 from pysidtracker import SidImage
 from pysidtracker.detect import PlayroutineKind
@@ -38,51 +42,60 @@ from pysidtracker.detect import PlayroutineKind
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import fetch_tunes  # noqa: E402  (after sys.path tweak)
 
-# The complete supported set: every HVSC tune whose player is the canonical
-# JCH_NewPlayer_V0x layout this reader/player models byte-exactly (proven
-# against the preframr-sidtrace oracle in tests/fixtures/*.grid.txt).
+# The V0x layout the byte-exact player replays (proven against the oracle in
+# tests/fixtures/*.grid.txt).
 SUPPORTED = {
     "Flexible/Scorpio (V0x)": "MUSICIANS/S/Scorpio/Flexible.sid",
     "Simple_Tune/JCH (V0x)": "MUSICIANS/J/JCH/Simple_Tune.sid",
 }
 
-# Sidid-tagged V0x tunes that share the V0x init signature (so recognize()
-# truthfully matches) but drive gate-on waveforms from an instrument table
-# rather than an immediate CTRL -- a routine pyjch does not model, so parse
-# must still reject them.
-REJECTED_V0X_VARIANT = {
-    "V0x-table-variant/Problems": "MUSICIANS/J/JCH/Problems.sid",
-    "V0x-table-variant/Imagination": "MUSICIANS/J/JCH/Imagination.sid",
-}
-
-# One deterministic representative per NON-canonical JCH NewPlayer version
-# present in HVSC (sidid-bucketed).  Each is a genuinely different player
-# (its init does not seed AD/SR from immediates), so it is neither recognised
-# nor parsed.
-REJECTED = {
+# One deterministic representative per wavetable-family version whose song
+# model the reader recovers.  ``parse`` returns a coherent NewPlayerModel.
+MODEL_RECOVERED = {
     "V1": "MUSICIANS/J/JCH/Beatbassie.sid",
     "V2": "MUSICIANS/J/JCH/Caverns.sid",
-    "V3": "MUSICIANS/J/JCH/2cVee.sid",
-    "V4": "MUSICIANS/J/JCH/Diflexing.sid",
-    "V5": "DEMOS/UNKNOWN/Falcon_Intro_03_v1.sid",
     "V6": "MUSICIANS/J/JCH/Acid_1988.sid",
-    "V7": "MUSICIANS/J/JCH/Lonewolf.sid",
     "V8": "MUSICIANS/D/DRAX/King_Tut.sid",
     "V9": "MUSICIANS/D/DRAX/Acid.sid",
     "V10": "MUSICIANS/D/DRAX/Ballmania_1st_version.sid",
     "V11": "MUSICIANS/B/Bjerregaard_Johannes/USA_Tune.sid",
-    "V12": "MUSICIANS/D/DRAX/Exorcist_game.sid",
     "V13": "MUSICIANS/A/Abaddon/Apina.sid",
     "V14": "DEMOS/A-F/Fjellaporna.sid",
     "V15": "MUSICIANS/A/Ahz_The_Demon/Lunardive.sid",
     "V17": "DEMOS/0-9/1st_Chaff.sid",
     "V18": "MUSICIANS/A/Avalon/Bambino.sid",
-    "V19": "DEMOS/G-L/I2_Bass_Loop.sid",
     "V20": "DEMOS/0-9/7D_Funkt.sid",
+}
+
+# Genuinely different players: a different data layout (or an entirely
+# different fork) the reader cannot recover, so it must reject them.
+REJECTED = {
+    "V3": "MUSICIANS/J/JCH/2cVee.sid",
+    "V4": "MUSICIANS/J/JCH/Diflexing.sid",
+    "V5": "DEMOS/UNKNOWN/Falcon_Intro_03_v1.sid",
+    "V7": "MUSICIANS/J/JCH/Lonewolf.sid",
+    "V12": "MUSICIANS/D/DRAX/Exorcist_game.sid",
+    "V19": "DEMOS/G-L/I2_Bass_Loop.sid",
     "Glover_NewPlayer_V21": "DEMOS/M-R/Mendelssohn.sid",
     "Dane_NewPlayer": "MUSICIANS/M/Mitch_and_Dane/Dane/Au_Revoir.sid",
     "JCH_DigiPlayer": "MUSICIANS/J/JCH/Easy_Does_It.sid",
 }
+
+# Sidid-tagged V0x tunes that share the V0x init signature (so recognize()
+# truthfully matches) but drive gate-on waveforms from an instrument table --
+# neither the V0x player nor the family reader models them, so parse rejects.
+REJECTED_V0X_VARIANT = {
+    "V0x-table-variant/Problems": "MUSICIANS/J/JCH/Problems.sid",
+    "V0x-table-variant/Imagination": "MUSICIANS/J/JCH/Imagination.sid",
+}
+
+# Directories dense with JCH NewPlayer tunes, walked by the bulk no-garbage
+# test.  Deterministic (fixed dirs), bounded, and skipped when absent.
+BULK_DIRS = (
+    "MUSICIANS/D/DRAX",
+    "MUSICIANS/L/Laxity",
+    "MUSICIANS/J/JCH",
+)
 
 
 def _resolve(relpath):
@@ -111,11 +124,41 @@ def _load(relpath):
     return Path(path).read_bytes()
 
 
+def _assert_coherent_model(model, load=0x1000):
+    """A recovered NewPlayerModel describes a coherent song, not garbage."""
+    end = load + len(model.image)
+    assert isinstance(model, NewPlayerModel)
+    assert model.load_addr == load
+    for base in (
+        model.subtune_table,
+        model.patternptr_lo,
+        model.patternptr_hi,
+        model.instruments,
+    ):
+        assert load <= base < end
+    # Subtune 0: three in-range order-list pointers and a tempo byte.
+    ptrs = [model.orderlist_ptr(0, v) for v in range(3)]
+    assert all(p is not None and load <= p < end for p in ptrs)
+    assert model.subtune_tempo(0) is not None
+    # Order lists walk to a terminator through in-range pattern pointers.
+    total = 0
+    for voice in range(3):
+        indices = model.iter_orderlist(0, voice)
+        for idx in indices:
+            assert load <= model.pattern_ptr(idx) < end
+        total += len(indices)
+    assert total > 0
+    # An instrument record is present.
+    rec = model.instrument(0)
+    assert rec is not None and len(rec) == 8
+
+
 @pytest.mark.parametrize("relpath", SUPPORTED.values(), ids=list(SUPPORTED))
 def test_supported_version_parses(relpath):
-    """Every canonical V0x tune parses, recognises, and detects DIRECT."""
+    """Every canonical V0x tune parses to a Song, recognises, detects DIRECT."""
     data = _load(relpath)
     song = reader.parse(data)
+    assert isinstance(song, Song)
     assert song.load_addr == 0x1000
     assert 0 <= song.init_ad <= 0xFF
     assert 0 <= song.init_sr <= 0xFF
@@ -128,13 +171,25 @@ def test_supported_version_parses(relpath):
     assert parser.detect(data, init=False).kind is PlayroutineKind.DIRECT
 
 
+@pytest.mark.parametrize("relpath", MODEL_RECOVERED.values(), ids=list(MODEL_RECOVERED))
+def test_family_model_recovered(relpath):
+    """A family representative parses to a coherent NewPlayerModel and recognises."""
+    data = _load(relpath)
+    model = reader.parse(data)
+    _assert_coherent_model(model)
+    assert reader.read(data).subtune_table == model.subtune_table
+
+    parser = JchSidParser()
+    assert parser.recognize(SidImage.from_bytes(data)) is not None
+    assert parser.detect(data, init=False).kind is PlayroutineKind.DIRECT
+
+
 @pytest.mark.parametrize("relpath", REJECTED.values(), ids=list(REJECTED))
 def test_other_version_rejected(relpath):
-    """A representative of every other JCH NewPlayer version is cleanly rejected."""
+    """A representative of every unrecoverable version is cleanly rejected."""
     data = _load(relpath)
     with pytest.raises(SidParseError):
         reader.parse(data)
-    # A foreign player: not the canonical V0x layout, so not even recognised.
     assert JchSidParser().recognize(SidImage.from_bytes(data)) is None
 
 
@@ -142,7 +197,7 @@ def test_other_version_rejected(relpath):
     "relpath", REJECTED_V0X_VARIANT.values(), ids=list(REJECTED_V0X_VARIANT)
 )
 def test_v0x_table_variant_rejected(relpath):
-    """A V0x-family tune with a table-driven gate routine parses to a clean error.
+    """A V0x-family tune with a table-driven gate routine rejects, not garbage.
 
     recognize() truthfully matches the shared V0x init signature, but parse
     rejects the unsupported layout instead of emitting garbage.
@@ -151,3 +206,40 @@ def test_v0x_table_variant_rejected(relpath):
     assert JchSidParser().recognize(SidImage.from_bytes(data)) is not None
     with pytest.raises(SidParseError):
         reader.parse(data)
+
+
+def test_bulk_family_recovery_no_garbage():
+    """Across whole JCH-dense HVSC dirs, every recognised family tune is coherent.
+
+    Walks a bounded, deterministic set of directories: any tune the family
+    reader accepts must yield a coherent model (never garbage), and a healthy
+    number must be recovered (proving the walk actually ran against real tunes).
+    """
+    base = None
+    for env in ("HVSC", "JCH_LOCAL_HVSC"):
+        cand = os.environ.get(env)
+        if cand and Path(cand).is_dir():
+            base = Path(cand)
+            break
+    if base is None:
+        pytest.skip("no local HVSC tree for the bulk corpus walk")
+
+    recovered = 0
+    checked = 0
+    for rel in BULK_DIRS:
+        root = base / rel
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.sid")):
+            checked += 1
+            data = path.read_bytes()
+            try:
+                model = reader.parse(data)
+            except SidParseError:
+                continue
+            if isinstance(model, NewPlayerModel):
+                _assert_coherent_model(model, load=model.load_addr)
+                recovered += 1
+    if checked == 0:
+        pytest.skip("bulk dirs present but empty")
+    assert recovered >= 50, f"expected many family recoveries, got {recovered}"

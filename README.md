@@ -6,10 +6,21 @@ demoscene). It parses a JCH tune into a typed song model and runs the
 playroutine to produce byte-exact per-frame SID register output, plus a
 register-log surface for downstream tooling.
 
-**Supported version:** the canonical `JCH_NewPlayer_V0x` layout (byte-exact:
-Flexible, Simple_Tune). HVSC contains 20+ other, genuinely different JCH
-NewPlayer binaries (`sidid` V1–V21, `Glover_NewPlayer_V21`, `JCH_DigiPlayer`);
-`parse` **rejects** them with a clear error rather than mis-parsing. See
+**Coverage (two tiers):**
+
+* **Byte-exact player** — the canonical `JCH_NewPlayer_V0x` layout
+  (Flexible, Simple_Tune): `parse` returns a `Song` the player replays
+  register-for-register.
+* **Model reader** — the later JCH NewPlayer *wavetable family*
+  (`sidid` V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18/V20 and part of
+  V5/V12, ~3,300 HVSC tunes): `parse` returns a `NewPlayerModel` recovering
+  the song DATA (subtune/order-list/pattern/instrument tables) directly from
+  the image. These versions share the V0x data layout (relocated) but a
+  different player opcode stream, so playback is **not** byte-exact-verified.
+
+A few genuinely different players (V3/V4/V7/V19, `Glover_NewPlayer_V21`,
+`Dane_NewPlayer`, `JCH_DigiPlayer`) and packed/relocated tunes are cleanly
+**rejected** rather than mis-parsed. See
 [docs/versions.md](docs/versions.md) for the full per-version HVSC census.
 
 Everything (read/play/register-log) is **pure stdlib** — no dependencies.
@@ -73,8 +84,13 @@ survive):
 - **Frequency tables** — `$121F` (lo) / `$1220` (hi), 0x80 entries, indexed
   by note with a per-voice transpose.
 
-When these idioms are absent the image is a different (unsupported) NewPlayer
-version and `parse` raises `SidParseError`.
+When these V0x idioms are absent, `parse` falls back to the **wavetable-family
+model reader** (`pyjch.newplayer`), which discovers the family table bases —
+subtune table, pattern-pointer low/high, instrument records, and (where
+present) wavetable note column / pitch table — by their own idioms and returns
+a `NewPlayerModel` if the recovered song is coherent (order lists walk to a
+terminator through in-range pattern pointers). If neither layout is
+recoverable, `parse` raises `SidParseError`.
 
 Init (`FUN_1060`) copies the orderlist pointer pairs into per-voice
 cur/base pointers, loads the tempo, and seeds the SID registers. Play
