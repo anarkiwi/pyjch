@@ -32,6 +32,7 @@ from pathlib import Path
 import pytest
 
 from pyjch import reader
+from pyjch.editor import NP25_PROFILE, _require_tables, np_profile, write_editor_prg
 from pyjch.errors import SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
@@ -227,6 +228,115 @@ def test_v0x_table_variant_rejected(relpath):
     assert JchSidParser().recognize(SidImage.from_bytes(data)) is not None
     with pytest.raises(SidParseError):
         reader.parse(data)
+
+
+# Per-version family table-discovery coverage, derived from the real HVSC run.
+# For each MODEL_RECOVERED representative: whether the generalized idioms recover
+# the wave note/ctrl columns and pitch table, whether the editor table gate
+# (_require_tables) passes, and whether a *full* editor .prg export succeeds.
+# ``gate`` implies note+ctrl+pitch discovered; ``export`` can still be blocked
+# by an editor format capacity limit (e.g. a pattern exceeding 96 rows) that is
+# independent of table discovery -- so ``gate and not export`` is honest.
+FAMILY_COVERAGE = {
+    "V1": {"note": False, "ctrl": False, "pitch": True, "gate": False, "export": False},
+    "V2": {"note": False, "ctrl": False, "pitch": True, "gate": False, "export": False},
+    "V6": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V8": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V9": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V10": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V11": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V13": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V14": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": False},
+    "V15": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": False},
+    "V17": {"note": True, "ctrl": True, "pitch": False, "gate": False, "export": False},
+    "V18": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V20": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+}
+
+
+@pytest.mark.parametrize("version", MODEL_RECOVERED, ids=list(MODEL_RECOVERED))
+def test_family_table_discovery_matrix(version):
+    """Each representative reaches exactly its recorded table-discovery tier.
+
+    Asserts the generalized wave-column / pitch idioms recover the tables the
+    coverage map records, that the editor table gate passes for the full-table
+    versions, and that a full ``$0F00`` editor ``.prg`` (with the wave/pitch
+    tables laid) is emitted for those whose data fits the editor format.
+    """
+    cov = FAMILY_COVERAGE[version]
+    model = reader.parse(_load(MODEL_RECOVERED[version]))
+    tune = extract(model)
+    wt = tune.wavetable
+    assert bool(wt and wt.note_col) is cov["note"]
+    assert bool(wt and wt.ctrl_col) is cov["ctrl"]
+    assert bool(tune.pitch_table) is cov["pitch"]
+    if cov["gate"]:
+        # Discovered wave columns and pitch resolve to in-range, coherent bases.
+        load, end = tune.load_addr, tune.load_addr + len(model.image)
+        keys = {
+            "family": ("wave_note_col", "wave_ctrl_col", "pitch_table"),
+            "v20": ("wave_note", "wave_ctrl", "pitch"),
+        }[tune.provenance.tier]
+        for key in keys:
+            base = tune.provenance.bases.get(key)
+            assert base is not None and load <= base < end
+        assert len(wt.note_col) <= 256 and len(wt.ctrl_col) <= 256
+        _require_tables(tune, NP25_PROFILE)  # must not raise
+    else:
+        with pytest.raises(SidParseError):
+            _require_tables(tune, NP25_PROFILE)
+    if cov["export"]:
+        prg = write_editor_prg(tune, profile=np_profile(25))
+        assert prg[:2] == bytes([0x00, 0x0F])  # load at $0F00
+        image = prg[2:]
+        base = NP25_PROFILE.base_wave_ctrl - NP25_PROFILE.load_addr
+        assert list(image[base : base + len(wt.ctrl_col)]) == wt.ctrl_col
+    elif cov["gate"]:
+        # Tables fully discovered but an editor format capacity limit blocks it.
+        with pytest.raises(SidParseError):
+            write_editor_prg(tune, profile=np_profile(25))
+
+
+def test_bulk_family_full_discovery_count():
+    """Across JCH-dense dirs, many family tunes now reach full table discovery.
+
+    A recovered NewPlayerModel that discovers both wave columns and the pitch
+    table must pass the editor table gate; asserts a healthy count reach it, so
+    the generalized idioms are proven against the real corpus, not just reps.
+    """
+    base = _hvsc_root()
+    if base is None:
+        pytest.skip("no local HVSC tree for the bulk corpus walk")
+    full = 0
+    checked = 0
+    for rel in BULK_DIRS:
+        root = base / rel
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.sid")):
+            checked += 1
+            try:
+                model = reader.parse(path.read_bytes())
+            except SidParseError:
+                continue
+            if not isinstance(model, NewPlayerModel):
+                continue
+            tune = extract(model)
+            wt = tune.wavetable
+            if wt and wt.note_col and wt.ctrl_col and tune.pitch_table:
+                _require_tables(tune, NP25_PROFILE)  # must not raise
+                full += 1
+    if checked == 0:
+        pytest.skip("bulk dirs present but empty")
+    assert full >= 300, f"expected many full-table discoveries, got {full}"
+
+
+def _hvsc_root():
+    for env in ("HVSC", "JCH_LOCAL_HVSC"):
+        cand = os.environ.get(env)
+        if cand and Path(cand).is_dir():
+            return Path(cand)
+    return None
 
 
 def test_bulk_family_recovery_no_garbage():

@@ -17,8 +17,10 @@ from the loaded image:
   loop / ``$80+`` transpose),
 * **pattern pointer** low/high tables (pattern base = ``hi<<8 | lo``),
 * 8-byte **instrument** records,
-* the note-frequency **pitch table** and the **wavetable note column**
-  (present on some versions).
+* the note-frequency **pitch table**, both **wavetable columns** (note + CTRL),
+  and (where present) the command / filter / PW-program tables -- the extra
+  tables lifted by generalizing the V20 idioms by role (per-build work cells
+  wildcarded), so the family reaches the same table coverage the V20 build does.
 
 Each table base is discovered by its surrounding player-code instruction
 idiom (the same relocation-safe idiom search the V0x reader uses), not a
@@ -97,6 +99,121 @@ def _find_subtune_base(image: bytes) -> Optional[int]:
             return image[op] | (image[op + 1] << 8)
 
 
+def _w16(image: bytes, off: int) -> int:
+    return image[off] | (image[off + 1] << 8)
+
+
+def _find_ctrl_shadow(image: bytes) -> Optional[int]:
+    """CTRL-shadow cell from the blit ``[LDA shadow,X] AND gate,X ; STA $D404,Y``.
+
+    The shadow is the per-voice CTRL byte ANDed with the gate mask and written
+    to ``$D404,Y`` every frame.  ``LDA shadow,X`` (``BD``) sits immediately
+    before ``AND gate,X`` (V13+ builds) or one ``LDY stride,X`` (``BC``) earlier
+    (V9-11 builds); both frames end ``AND gate,X ; STA $D404,Y``.
+    """
+    i = 0
+    top = len(image) - 6
+    while i <= top:
+        if image[i] == 0x3D and image[i + 3 : i + 6] == b"\x99\x04\xd4":
+            if i >= 3 and image[i - 3] == 0xBD:
+                return _w16(image, i - 2)
+            if i >= 6 and image[i - 6] == 0xBD and image[i - 3] == 0xBC:
+                return _w16(image, i - 5)
+        i += 1
+    return None
+
+
+def _find_note_column(image: bytes, wave_ctrl: int, wtptr: int) -> Optional[int]:
+    """Parallel note column paired with ``wave_ctrl`` under pointer ``wtptr``.
+
+    Prefers the ``$7F``-jump handler ``LDA ctrl,Y ; STA wtptr,X ; TAY ;
+    LDA note,Y`` (which ties both columns to the same pointer); falls back to
+    the note-column read ``LDY wtptr,X ; LDA note,Y`` gated by its column test
+    (``CMP #$7E/$7F`` or ``BMI/BPL``).
+    """
+    wc = bytes([wave_ctrl & 0xFF, wave_ctrl >> 8])
+    wp = bytes([wtptr & 0xFF, wtptr >> 8])
+    jump = image.find(b"\xb9" + wc + b"\x9d" + wp + b"\xa8\xb9")
+    if jump >= 0:
+        return _w16(image, jump + 8)
+    pre = b"\xbc" + wp + b"\xb9"
+    start = 0
+    while True:
+        hit = image.find(pre, start)
+        if hit < 0:
+            return None
+        start = hit + 1
+        note = _w16(image, hit + 4)
+        if note != wave_ctrl and image[hit + 6] in (0xC9, 0x30, 0x10):
+            return note
+
+
+def _find_wave_columns(image: bytes) -> Tuple[Optional[int], Optional[int]]:
+    """Discover the ``(note, ctrl)`` wavetable columns, or ``(None, None)``.
+
+    Anchors on the CTRL-shadow cell, then the wavetable store frame
+    ``LDY wtptr,X ; LDA ctrl,Y ; STA shadow,X`` -- confirmed by an ``INC
+    wtptr,X`` tick (the per-frame wavetable advance) so a per-instrument CTRL
+    field group (V1/V2) is rejected -- then the parallel note column.
+    """
+    shadow = _find_ctrl_shadow(image)
+    if shadow is None:
+        return None, None
+    suffix = b"\x9d" + bytes([shadow & 0xFF, shadow >> 8])
+    start = 0
+    while True:
+        hit = image.find(b"\xb9", start)
+        if hit < 0:
+            return None, None
+        start = hit + 1
+        if image[hit + 3 : hit + 6] != suffix or hit < 3 or image[hit - 3] != 0xBC:
+            continue
+        wtptr = _w16(image, hit - 2)
+        wave_ctrl = _w16(image, hit + 1)
+        if b"\xfe" + bytes([wtptr & 0xFF, wtptr >> 8]) not in image:  # INC wtptr,X
+            continue
+        note = _find_note_column(image, wave_ctrl, wtptr)
+        if note is not None:
+            return note, wave_ctrl
+
+
+def _find_cmdparam(image: bytes) -> Optional[int]:
+    """Command-parameter table via ``ASL ; TAY ; LDA param,Y ; PHA``."""
+    hit = image.find(b"\x0a\xa8\xb9")
+    while hit >= 0:
+        if image[hit + 5] == 0x48:
+            return _w16(image, hit + 3)
+        hit = image.find(b"\x0a\xa8\xb9", hit + 1)
+    return None
+
+
+def _find_filterprog(image: bytes) -> Optional[int]:
+    """Filter/groove program via ``LDY grvidx ; LDA filterprog,Y ; STA grvctr``."""
+    i = 0
+    top = len(image) - 9
+    while i <= top:
+        if image[i] == 0xAC and image[i + 3] == 0xB9 and image[i + 6] == 0x8D:
+            return _w16(image, i + 4)
+        i += 1
+    return None
+
+
+def _find_pwprog(image: bytes) -> Optional[int]:
+    """PW program via ``LDY pwcur,X ; LDA pwnext,Y ; STA pwcur,X`` (base = next-3)."""
+    i = 0
+    top = len(image) - 9
+    while i <= top:
+        if (
+            image[i] == 0xBC
+            and image[i + 3] == 0xB9
+            and image[i + 6] == 0x9D
+            and _w16(image, i + 1) == _w16(image, i + 7)
+        ):
+            return _w16(image, i + 4) - 3
+        i += 1
+    return None
+
+
 @dataclass
 class NewPlayerModel:
     """Recovered song model of a JCH NewPlayer wavetable-family tune.
@@ -125,7 +242,11 @@ class NewPlayerModel:
     patternptr_hi: int = 0
     instruments: int = 0
     wave_note_col: Optional[int] = None
+    wave_ctrl_col: Optional[int] = None
     pitch_table: Optional[int] = None
+    cmdparam: Optional[int] = None
+    filterprog: Optional[int] = None
+    pwprog: Optional[int] = None
     image: bytes = b""
     container_header: bytes = b""
 
@@ -235,12 +356,29 @@ def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
     for addr in bases.values():
         if addr is None or not load <= addr < end:
             return None
-    wave = _find_absy(image, _CMP_7E)
-    if wave is not None and load <= wave < end:
-        bases["wave_note_col"] = wave
+    note, ctrl = _find_wave_columns(image)
+    if (
+        note is not None
+        and ctrl is not None
+        and load <= note < end
+        and load <= ctrl < end
+    ):
+        bases["wave_note_col"] = note
+        bases["wave_ctrl_col"] = ctrl
+    else:
+        wave = _find_absy(image, _CMP_7E)
+        if wave is not None and load <= wave < end:
+            bases["wave_note_col"] = wave
     pitch_hi = _find_absy(image, _ADC_00)
     if pitch_hi is not None and load < pitch_hi < end:
         bases["pitch_table"] = pitch_hi - 1
+    for key, addr in (
+        ("cmdparam", _find_cmdparam(image)),
+        ("filterprog", _find_filterprog(image)),
+        ("pwprog", _find_pwprog(image)),
+    ):
+        if addr is not None and load <= addr < end:
+            bases[key] = addr
     return bases
 
 
