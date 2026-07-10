@@ -177,6 +177,38 @@ def _find_wave_columns(image: bytes) -> Tuple[Optional[int], Optional[int]]:
             return note, wave_ctrl
 
 
+def _find_interleaved_wave(image: bytes) -> Optional[int]:
+    """Base of the V1/V2 single interleaved ``(ctrl, note)`` wave stream, or ``None``.
+
+    V1/V2 predate the two parallel wave columns: one stream holds ``ctrl`` (even
+    byte, written to the CTRL shadow) and ``note`` (odd byte) alternating, with a
+    cursor stepped ``+2`` per tick.  A ``$FF`` ctrl byte is a **restart** whose
+    loop target is reloaded from a per-voice runtime cell seeded at instrument
+    init from the instrument's wave-start field -- not an inline column.  Anchored
+    on the restart handler ``CMP #$FF ; BNE +9 ; LDA restart,X ; STA cursor,X ;
+    JMP`` cross-checked against the stream read ``LDY cursor,X ; LDA base,Y ;
+    CMP #$FF`` with the same cursor cell.  Returns the stream base.
+
+    This model is *not* invertible to the editor's two 256-byte columns for a
+    faithful export: the ~16-byte instrument records and the embedded limit-based
+    PW/filter have no editor representation (see ``docs/versions.md``); the base
+    is returned only so the recovered model can describe itself honestly.
+    """
+    hit = image.find(b"\xc9\xff\xd0\x09\xbd")
+    while hit >= 0:
+        if (
+            hit + 11 <= len(image)
+            and image[hit + 7] == 0x9D
+            and image[hit + 10] == 0x4C
+        ):
+            cursor = bytes([image[hit + 8], image[hit + 9]])
+            read = image.find(b"\xbc" + cursor + b"\xb9")
+            if read >= 0 and image[read + 6 : read + 8] == b"\xc9\xff":
+                return _w16(image, read + 4)
+        hit = image.find(b"\xc9\xff\xd0\x09\xbd", hit + 1)
+    return None
+
+
 def _find_cmdparam(image: bytes) -> Optional[int]:
     """Command-parameter table via ``ASL ; TAY ; LDA param,Y ; PHA``."""
     hit = image.find(b"\x0a\xa8\xb9")
@@ -271,6 +303,7 @@ class NewPlayerModel:
     instruments: int = 0
     wave_note_col: Optional[int] = None
     wave_ctrl_col: Optional[int] = None
+    wave_stream: Optional[int] = None  # V1/V2 single interleaved (ctrl,note) stream
     pitch_table: Optional[int] = None
     cmdparam: Optional[int] = None
     filterprog: Optional[int] = None
@@ -397,6 +430,9 @@ def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
         wave = _find_absy(image, _CMP_7E)
         if wave is not None and load <= wave < end:
             bases["wave_note_col"] = wave
+        stream = _find_interleaved_wave(image)
+        if stream is not None and load <= stream < end:
+            bases["wave_stream"] = stream
     pitch_hi = _find_absy(image, _ADC_00)
     if pitch_hi is not None and load < pitch_hi < end:
         bases["pitch_table"] = pitch_hi - 1

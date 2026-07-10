@@ -90,29 +90,49 @@ across the family:
   frame, so they generalize to the V20 sub-builds only).
 
 The **classic family (V6-V18) filter/PW programs are *not* recovered** into the
-editor format, and this is a genuine layout difference, not a missing idiom.
-Disassembly of the V9 (`DRAX/Acid.sid`) and V13 (`Abaddon/Apina.sid`) sweep code
-shows the classic program step advances its cursor **sequentially** (`TYA ; CLC ;
-ADC #$04 ; STA cursor`) with **no next-index column**, and its 4-byte entry
-column order (step, dir, value/reset, …) differs from the NP20-25 editor
-pulse/filter format (value, count, dir+rate, next-absolute-index). A verbatim
-copy would be misread by the editor and a column remap would be an unverified
-guess, so these programs are left absent (noted in `Provenance`) rather than
-fabricated. Only V20-frame builds recover filter/PW.
+editor format, and this is a genuine *engine* difference, not a column reorder or
+a missing idiom. Disassembly of the V9 (`DRAX/Acid.sid`, PW engine `$1245`,
+filter engine `$12e3`) and V13 (`Abaddon/Apina.sid`, PW cursor `$13ba`, filter
+cursor `$1464`) sweep code shows the classic program is a **limit-based
+ping-pong**: each 4-byte entry is `{packed up/down limits (hi/lo nibble), step,
+flags+dwell, value}`, the cursor advances **sequentially** (`TYA ; CLC ; ADC #$04
+; STA cursor`, **no next-index column**), and the accumulator **auto-reflects**
+when it reaches the packed hi/lo limits (`ADC step ; CMP up-limit ; ... ; SBC
+step ; CMP down-limit ; EOR direction`). The NP20-25 editor pulse/filter format
+is a *next-index-chained* `{value, step, dwell, next-absolute-index}` model with
+**no limits column and no reflection**. The classic **limits column is
+load-bearing** (it drives the reflection) and has no editor representation, and
+the editor's `next`/`value` columns occupy roles the classic format encodes
+differently; converting would mean *simulating the accumulator* to re-encode a
+hardware reflection as an entry chain -- a re-encoding, not a faithful structural
+transform, and unverifiable with no classic-editor tune as ground truth. So these
+programs are left absent (noted in `Provenance`) rather than fabricated. Only
+V20-frame builds recover filter/PW. (The earlier "different column order, no next
+column" note understated this: the real blocker is the reflection model.)
 
-The **V1/V2 wavetable is likewise not invertible** to the editor's two-column
-format, so V1/V2 stay gated out of editor export. Disassembly of V1
+The **V1/V2 wave `$FF`-restart target is now *derived*** -- but full editor export
+stays blocked at the instrument + PW/filter layers. Disassembly of V1
 (`JCH/Beatbassie.sid`, walk at `$1488`) and V2 (`JCH/Caverns.sid`, walk at
-`$14ba`) shows a **single interleaved `(ctrl,note)` stream** (one table, even
-byte = waveform written to the CTRL shadow, odd byte = note), where `$FF` is a
-**restart** whose loop target is reloaded from a **per-voice runtime cell**
-(`$1826,X` / `$170c,X`) seeded at instrument init -- *not* the editor's two
-parallel 256-byte columns with `$7E` hold / `$7F` jump-to-an-inline-target.
-Because the loop point lives off-table, de-interleaving alone cannot reconstruct
-the editor's self-contained jump target; the instrument records are also
-column-organized (waveform/AD in separate columns) rather than 8-byte
-contiguous. Reconstructing the editor form would require fabricating the
-loop-point encoding, so V1/V2 are left rejected.
+`$14ba`) shows a **single interleaved `(ctrl,note)` stream** (V1 base `$170f`,
+cursor `$1709,X`; V2 base `$1781`, cursor `$17f6,X`): even byte = waveform written
+to the CTRL shadow, odd byte = note, cursor stepped `+2`/tick. A `$FF` ctrl byte
+is a **restart** whose loop target is reloaded from a per-voice runtime cell (V1
+`$170c,X`, V2 `$1826,X`). Tracing the seed: at instrument init the cell is written
+**exactly once** from the instrument's wave-start field (V1 `$138d-$1394`: `LDA
+$1778,Y ; ASL ; STA $1709,X ; STA $170c,X`), so the restart target **is the
+instrument's own wave-start** -- the stream therefore *does* de-interleave to the
+editor's two columns with a synthesised inline `$7F` target = wave-start (the
+prior "off-table, not invertible" blocker for the wave layer is resolved; the
+model records the interleaved stream base in `wave_stream` and notes the
+derivation). A **faithful editor export is still blocked**, though, by two other
+genuine differences: (i) V1/V2 instrument records are **16-byte** (`inst# * 16`,
+`ASL A` ×4 at V1 `$125a`) with editor-incompatible field roles (AD `+0`, SR `+1`,
+filter `+3`, PW-limits `+5/+6`, restart-mode `+7`, wave-start `+8`) -- not the
+editor's 8-byte layout; and (ii) their PW/filter are the **same limit-based
+ping-pong as the classic family, embedded per-instrument** (no shared program
+table for the editor's `pwprog`/`filterprog` pointers to reference). With no
+V1/V2 editor-form tune as ground truth to validate an instrument transpose, a
+faithful export cannot be proven, so V1/V2 stay gated out of editor export.
 
 With both wave columns and the pitch table recovered, `pyjch.extract` produces a
 full family `Tune` and the editor `.prg` writer's `_require_tables` gate passes.
@@ -136,7 +156,7 @@ Per-version representative outcome (`tests/test_corpus.py::FAMILY_COVERAGE`):
 | V6/V8/V9/V10/V11/V13/V18 | Y | Y | Y | V18 only | Y | Y |
 | V14/V15 | Y | Y | Y | – | Y | Y (96-row sequence split) |
 | V17 | Y | Y | Y | – | Y | Y (interleaved pitch idiom, no `ADC #$00`) |
-| V1/V2 | – | – | Y | – | – | interleaved (ctrl,note) wave stream, `$FF`-restart target held off-table; not invertible to the editor's two-column format |
+| V1/V2 | – | – | Y | – | – | interleaved (ctrl,note) wave stream; `$FF`-restart target *derived* (= instrument wave-start), so the wave layer de-interleaves -- but export blocked by 16-byte instrument records + embedded limit-based PW/filter |
 | V20 (code build) | Y | Y | Y | Y | Y | Y |
 
 ## HVSC census and per-version verdict
