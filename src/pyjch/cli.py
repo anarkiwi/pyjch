@@ -2,12 +2,16 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 from pyjch import reglog, v20player
+from pyjch.editor import write_editor_prg
 from pyjch.errors import JCHError, SidParseError
+from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.reader import read
+from pyjch.serialize import to_json, to_text
 
 
 def _info_common(song) -> None:
@@ -64,6 +68,20 @@ def _reglog(args) -> None:
     print(f"wrote {args.output}")
 
 
+def _export(args) -> None:
+    tune = extract(read(args.song))
+    if args.format == "text":
+        Path(args.output).write_text(to_text(tune), encoding="utf-8")
+    elif args.format == "editor-prg":
+        if not args.driver:
+            raise SidParseError("--format editor-prg requires --driver PATH")
+        driver = Path(args.driver).read_bytes()
+        Path(args.output).write_bytes(write_editor_prg(tune, driver=driver))
+    else:
+        Path(args.output).write_text(to_json(tune), encoding="utf-8")
+    print(f"wrote {args.output}")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pyjch", description="JCH NewPlayer song tools"
@@ -79,6 +97,13 @@ def _parser() -> argparse.ArgumentParser:
     log.add_argument("output", help="register log file to write")
     log.add_argument("--seconds", type=float, default=60.0)
     log.set_defaults(func=_reglog)
+
+    exp = commands.add_parser("export", help="export the recovered song model")
+    exp.add_argument("song", help="JCH NewPlayer .sid/.prg file")
+    exp.add_argument("output", help="output file (.json/.txt/.prg)")
+    exp.add_argument("--format", choices=("json", "text", "editor-prg"), default="json")
+    exp.add_argument("--driver", help="stock player .prg for --format editor-prg")
+    exp.set_defaults(func=_export)
     return parser
 
 

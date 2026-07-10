@@ -1,12 +1,20 @@
 """CLI: info and reglog subcommands."""
 
+import json
 import struct
 
 import pytest
 
 from pyjch import cli
 from pyjch.reglog import read_reglog
+from tests import _synth_v20 as synth
 from tests.test_newplayer import _base_image
+
+
+def _synth_sid(tmp_path):
+    dst = tmp_path / "synth.sid"
+    dst.write_bytes(synth.build_psid())
+    return dst
 
 
 def _family_psid(tmp_path):
@@ -75,6 +83,50 @@ def test_error_on_missing_file(capsys):
     rc = cli.main(["info", "/nonexistent/tune.sid"])
     assert rc == 1
     assert "error:" in capsys.readouterr().err
+
+
+def test_export_json(capsys, tmp_path):
+    out = tmp_path / "tune.json"
+    rc = cli.main(["export", str(_synth_sid(tmp_path)), str(out)])
+    assert rc == 0
+    assert json.loads(out.read_text())["provenance"]["tier"] == "v20"
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_export_text(tmp_path):
+    out = tmp_path / "tune.txt"
+    rc = cli.main(["export", str(_synth_sid(tmp_path)), str(out), "--format", "text"])
+    assert rc == 0
+    assert "tier: v20" in out.read_text()
+
+
+def test_export_editor_prg(tmp_path):
+    driver = tmp_path / "driver.prg"
+    driver.write_bytes(bytes(0x2000))
+    out = tmp_path / "tune.prg"
+    rc = cli.main(
+        [
+            "export",
+            str(_synth_sid(tmp_path)),
+            str(out),
+            "--format",
+            "editor-prg",
+            "--driver",
+            str(driver),
+        ]
+    )
+    assert rc == 0
+    prg = out.read_bytes()
+    assert prg[0] | (prg[1] << 8) == 0x0F00
+
+
+def test_export_editor_prg_requires_driver(capsys, tmp_path):
+    out = tmp_path / "tune.prg"
+    rc = cli.main(
+        ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+    )
+    assert rc == 1
+    assert "requires --driver" in capsys.readouterr().err
 
 
 def test_requires_subcommand():
