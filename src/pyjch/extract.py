@@ -388,7 +388,11 @@ def _extract_family(model) -> Tune:  # pylint: disable=too-many-locals
     if model.cmdparam is None:
         notes.append("$C0 pattern commands unclassified (no command table)")
     if model.filterprog is None or model.pwprog is None:
-        notes.append("pulse/filter program not recovered")
+        notes.append(
+            "pulse/filter program not recovered (classic-family sweep uses a "
+            "sequential Y+=4 cursor with no next-index column and a different "
+            "column order than the NP20-25 editor pulse/filter format)"
+        )
     notes.append("hard-restart not recovered")
     bases = {
         "subtune_table": model.subtune_table,

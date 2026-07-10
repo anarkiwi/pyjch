@@ -87,7 +87,18 @@ across the family:
 * the **command table** via `ASL ; TAY ; LDA param,Y ; PHA`; the **filter** and
   **PW** programs via `LDY grvidx ; LDA filt,Y ; STA grvctr` and
   `LDY pwcur,X ; LDA pwnext,Y ; STA pwcur,X` (these last two share V20's opcode
-  frame, so they generalize to the V20 sub-builds).
+  frame, so they generalize to the V20 sub-builds only).
+
+The **classic family (V6-V18) filter/PW programs are *not* recovered** into the
+editor format, and this is a genuine layout difference, not a missing idiom.
+Disassembly of the V9 (`DRAX/Acid.sid`) and V13 (`Abaddon/Apina.sid`) sweep code
+shows the classic program step advances its cursor **sequentially** (`TYA ; CLC ;
+ADC #$04 ; STA cursor`) with **no next-index column**, and its 4-byte entry
+column order (step, dir, value/reset, …) differs from the NP20-25 editor
+pulse/filter format (value, count, dir+rate, next-absolute-index). A verbatim
+copy would be misread by the editor and a column remap would be an unverified
+guess, so these programs are left absent (noted in `Provenance`) rather than
+fabricated. Only V20-frame builds recover filter/PW.
 
 With both wave columns and the pitch table recovered, `pyjch.extract` produces a
 full family `Tune` and the editor `.prg` writer's `_require_tables` gate passes.
