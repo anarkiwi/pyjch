@@ -37,7 +37,9 @@ for writes in pyjch.iter_frames(song, max_frames=50 * 60):
 
 See [docs/usage.md](docs/usage.md) for the register grid, register logs, and the
 CLI, [docs/format.md](docs/format.md) for the format, players, and byte-exact
-validation, and [docs/versions.md](docs/versions.md) for the HVSC census.
+validation, [docs/versions.md](docs/versions.md) for the HVSC census, and
+[docs/editor-format.md](docs/editor-format.md) for the JCH-Editor NP22-25 native
+song layout (the structural-export target).
 
 ## Development
 

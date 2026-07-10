@@ -93,6 +93,10 @@ only the byte-identical V20 build, so no tune is silently mis-played.
 ## References
 
 - [versions.md](versions.md) — full per-version HVSC census and support verdict.
+- [editor-format.md](editor-format.md) — the JCH-Editor NP22-25 native song
+  layout (export target: header pointer table, tables, encodings; sourced).
+- [exporter-plan.md](exporter-plan.md) — staged plan to implement the structural
+  exporter (neutral model → JSON / editor-native `.prg`) in this library.
 - `preframr-sidtrace` register oracle; py65 V20 oracle (`tests/_v20oracle.py`).
 - [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) — shared
   container/image/detection base.

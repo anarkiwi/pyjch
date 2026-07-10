@@ -33,6 +33,7 @@ import pytest
 
 from pyjch import reader
 from pyjch.errors import SidParseError
+from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.reader import JchSidParser
@@ -182,6 +183,26 @@ def test_family_model_recovered(relpath):
     parser = JchSidParser()
     assert parser.recognize(SidImage.from_bytes(data)) is not None
     assert parser.detect(data, init=False).kind is PlayroutineKind.DIRECT
+
+
+@pytest.mark.parametrize("relpath", MODEL_RECOVERED.values(), ids=list(MODEL_RECOVERED))
+def test_family_extracts_to_coherent_tune(relpath):
+    """Every family representative extracts to a bounded, coherent Tune."""
+    model = reader.parse(_load(relpath))
+    tune = extract(model)
+    assert tune.provenance.tier in ("v20", "family")
+    assert tune.subtunes and all(len(s.order_lists) == 3 for s in tune.subtunes)
+    # capacities respected (never garbage-unbounded)
+    assert len(tune.subtunes) <= 31
+    assert len(tune.patterns) <= 114
+    assert 1 <= len(tune.instruments) <= 32
+    # every order-list entry references a decoded pattern
+    for sub in tune.subtunes:
+        for order in sub.order_lists:
+            for entry in order.entries:
+                assert 0 <= entry.pattern < len(tune.patterns)
+    if tune.provenance.tier == "family":
+        assert tune.provenance.notes
 
 
 @pytest.mark.parametrize("relpath", REJECTED.values(), ids=list(REJECTED))
