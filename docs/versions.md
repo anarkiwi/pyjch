@@ -92,16 +92,22 @@ full family `Tune` and the editor `.prg` writer's `_require_tables` gate passes.
 Over the JCH-dense HVSC dirs (`DRAX`/`Laxity`/`JCH`) **~954 of ~968** recovered
 family/V20 models now recover both wave columns and **~895** pass the table gate
 (up from zero for the non-V20-build family). A full editor export additionally
-requires the song to fit the editor format capacity (≤96-row patterns, ≤114
-patterns, ≤32 instruments, ≤256-byte tables); tunes that exceed those limits are
-gated fully but not editor-exportable.
+requires the song to fit the editor format capacity (≤114 patterns, ≤32
+instruments, ≤256-byte tables). A sequence longer than the editor's 96-**row**
+cap (a row is a player fetch unit -- zero or more command bytes then one note
+byte, not a raw byte) is split losslessly in the writer into consecutive ≤96-row
+chunk-sequences, with the voice's order list rewritten to reference them in order
+(state persists across a sequence boundary: end-of-pattern only resets the
+pattern cursor and advances the order pointer, so the split is behaviourally
+identical). Tunes that still exceed a hard limit (a non-terminating sequence, or
+>114 patterns after the split) are gated fully but not editor-exportable.
 
 Per-version representative outcome (`tests/test_corpus.py::FAMILY_COVERAGE`):
 
 | version | wave-ctrl | wave-note | pitch | command | gate | full export |
 | ------- | :-------: | :-------: | :---: | :-----: | :--: | :---------: |
 | V6/V8/V9/V10/V11/V13/V18 | Y | Y | Y | V18 only | Y | Y |
-| V14/V15 | Y | Y | Y | – | Y | capacity-blocked (pattern >96 rows) |
+| V14/V15 | Y | Y | Y | – | Y | Y (96-row sequence split) |
 | V17 | Y | Y | – | – | – | pitch idiom (`ADC #$00`) absent |
 | V1/V2 | – | – | Y | – | – | CTRL from per-instrument field group, no pointer-indexed wave column |
 | V20 (code build) | Y | Y | Y | Y | Y | Y |

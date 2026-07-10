@@ -128,9 +128,77 @@ def test_capacity_overflow_raises():
     over = dataclasses.replace(tune, instruments=tune.instruments * 9)
     with pytest.raises(SidParseError):
         editor.write_editor_prg(over)
-    rows = dataclasses.replace(tune, patterns=[tune.patterns[0] * 50])
-    with pytest.raises(SidParseError):
-        editor.write_editor_prg(rows)
+    # >114 sequences: over the editor pattern cap.
+    many = dataclasses.replace(
+        tune, patterns=[[]] * 115, pattern_raw=[[0x01, 0x7F]] * 115
+    )
+    with pytest.raises(SidParseError, match="patterns"):
+        editor.write_editor_prg(many)
+    # An over-96-row sequence with no $7F terminator cannot be split -> rejected.
+    unterminated = dataclasses.replace(
+        tune,
+        patterns=[[]],
+        pattern_raw=[[0x01] * 200],
+        subtunes=[dataclasses.replace(tune.subtunes[0])],
+    )
+    with pytest.raises(SidParseError, match="rows"):
+        editor.write_editor_prg(unterminated)
+
+
+def test_long_pattern_split_roundtrip():
+    """A >96-row sequence splits losslessly into <=96-row chunks on export.
+
+    The emitted order list references the chunk sequences in order; walking it
+    through the seq-pointer tables and concatenating the chunk bodies reproduces
+    the original recovered sequence bytes exactly (minus injected $7F).
+    """
+    tune = _tune()
+    profile = editor.NP25_PROFILE
+    # A 150-row voice-0 sequence: 150 note bytes ($01), $7F terminator.
+    body = [0x01] * 150
+    long_raw = body + [0x7F]
+    events = [dataclasses.replace(tune.patterns[0][1]) for _ in range(150)]
+    patterns = list(tune.patterns)
+    pattern_raw = list(tune.pattern_raw)
+    patterns[0] = events
+    pattern_raw[0] = long_raw
+    sub = tune.subtunes[0]
+    order0 = dataclasses.replace(
+        sub.order_lists[0],
+        entries=[editor.OrderEntry(pattern=0, transpose=0)],
+        raw=[0x00, 0xFF],
+    )
+    subtune = dataclasses.replace(sub, order_lists=[order0] + sub.order_lists[1:])
+    tune = dataclasses.replace(
+        tune, patterns=patterns, pattern_raw=pattern_raw, subtunes=[subtune]
+    )
+
+    prg = editor.write_editor_prg(tune, profile=profile)
+    _load, word, byte = _image(prg)
+
+    seqlo = word(profile.ptr_addr(profile.idx_seqlo))
+    seqhi = word(profile.ptr_addr(profile.idx_seqhi))
+
+    def seq_body(idx):
+        addr = byte(seqlo + idx) | (byte(seqhi + idx) << 8)
+        out = []
+        while byte(addr) != 0x7F:
+            out.append(byte(addr))
+            addr += 1
+        return out
+
+    order_base = word(profile.ptr_addr(profile.idx_order[0]))
+    addr = order_base
+    seqs = []
+    while byte(addr) not in (0xFE, 0xFF):
+        if byte(addr) < 0x80:
+            seqs.append(byte(addr))
+        addr += 1
+    assert len(seqs) >= 2  # 150 rows -> at least two <=96-row chunks
+    rebuilt = [b for idx in seqs for b in seq_body(idx)]
+    assert rebuilt == body
+    for idx in seqs:
+        assert len(seq_body(idx)) <= 96  # each chunk within the 96-row cap
 
 
 def test_missing_table_raises_clear_message():

@@ -246,8 +246,8 @@ FAMILY_COVERAGE = {
     "V10": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V11": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V13": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
-    "V14": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": False},
-    "V15": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": False},
+    "V14": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
+    "V15": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V17": {"note": True, "ctrl": True, "pitch": False, "gate": False, "export": False},
     "V18": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V20": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
@@ -295,6 +295,101 @@ def test_family_table_discovery_matrix(version):
         # Tables fully discovered but an editor format capacity limit blocks it.
         with pytest.raises(SidParseError):
             write_editor_prg(tune, profile=np_profile(25))
+
+
+# A family tune with a sequence exceeding the 96-row cap: exercises the
+# lossless split in the editor writer end-to-end against real data.
+SPLIT_REPRESENTATIVE = "MUSICIANS/D/DRAX/Worktunes/KLKLK.sid"
+
+
+def _voice_sequences(prg, profile, voice):
+    """Walk the emitted order list for ``voice`` -> list of chunk-body byte lists."""
+    load = prg[0] | (prg[1] << 8)
+    img = prg[2:]
+    byte = lambda addr: img[addr - load]  # noqa: E731
+    word = lambda addr: byte(addr) | (byte(addr + 1) << 8)  # noqa: E731
+    seqlo = word(profile.ptr_addr(profile.idx_seqlo))
+    seqhi = word(profile.ptr_addr(profile.idx_seqhi))
+
+    def seq_body(idx):
+        addr = byte(seqlo + idx) | (byte(seqhi + idx) << 8)
+        out = []
+        while byte(addr) != 0x7F:
+            out.append(byte(addr))
+            addr += 1
+        return out
+
+    addr = word(profile.ptr_addr(profile.idx_order[voice]))
+    bodies = []
+    while byte(addr) not in (0xFE, 0xFF):
+        if byte(addr) < 0x80:
+            bodies.append(seq_body(byte(addr)))
+        addr += 1
+    return bodies
+
+
+def test_pattern_split_roundtrip_real_tune():
+    """A real tune with a >96-row sequence exports; the split is lossless.
+
+    Every emitted sequence is <=96 rows, and walking each voice's emitted order
+    list and concatenating the chunk bodies reproduces the original recovered
+    per-voice sequence stream byte-for-byte (minus injected $7F terminators).
+    """
+    path = _resolve(SPLIT_REPRESENTATIVE)
+    if path is None:
+        pytest.skip(f"{SPLIT_REPRESENTATIVE} unavailable")
+    tune = extract(reader.parse(Path(path).read_bytes()))
+    # This representative must actually contain an over-cap sequence to split.
+    assert any(
+        sum(1 for b in raw[:-1] if b < 0x80) > 96 for raw in tune.pattern_raw
+    ), "representative no longer exercises the split"
+    profile = np_profile(25)
+    prg = write_editor_prg(tune, profile=profile)
+    for voice in range(3):
+        emitted = _voice_sequences(prg, profile, voice)
+        for body in emitted:
+            assert sum(1 for b in body if b < 0x80) <= 96
+        original = [
+            b
+            for entry in tune.subtunes[0].order_lists[voice].entries
+            for b in tune.pattern_raw[entry.pattern][:-1]
+        ]
+        assert [b for body in emitted for b in body] == original
+
+
+def test_bulk_family_full_export_count():
+    """Across JCH-dense dirs, many family tunes now reach a full editor export.
+
+    Every gate-passing tune whose sequences fit (after the 96-row split) emits a
+    valid ``$0F00`` editor ``.prg``; asserts a healthy count, proving the row-cap
+    fix + split unlocked export at scale, not just for the representatives.
+    """
+    base = _hvsc_root()
+    if base is None:
+        pytest.skip("no local HVSC tree for the bulk corpus walk")
+    exported = 0
+    checked = 0
+    for rel in BULK_DIRS:
+        root = base / rel
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.sid")):
+            checked += 1
+            try:
+                model = reader.parse(path.read_bytes())
+            except SidParseError:
+                continue
+            if not isinstance(model, NewPlayerModel):
+                continue
+            try:
+                prg = write_editor_prg(extract(model), profile=np_profile(25))
+            except SidParseError:
+                continue
+            assert prg[:2] == bytes([0x00, 0x0F])
+            exported += 1
+    if checked == 0:
+        pytest.skip("bulk dirs present but empty")
+    assert exported >= 250, f"expected many full editor exports, got {exported}"
 
 
 def test_bulk_family_full_discovery_count():
