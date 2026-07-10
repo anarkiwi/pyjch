@@ -27,37 +27,40 @@ to resolve from the `.d64` / `docs.doc`.
   (optional, occasionally lossy); "Syndrom's JCH-depacker" reverses it back to
   editor format. Export targets the *unpacked* editor `.prg`.
 
-## Header pointer table `$0Fxx` [V, NP20]
+## Header pointer table `$0FA0` [V, NP20/21]
 
-The editor keeps every table's base in a fixed pointer block near the load
-address (16-bit little-endian). This indirection is the heart of the native
-format — the packed player inlines these operands, but the editor reads through
-the table. Offsets verified from the SID Factory II JCH converter
-([`converter_jch.cpp`][sf2]):
+The editor keeps every table's base in a **contiguous 16-bit-LE pointer array
+based at `$0FA0`**, indexed `ptr[i] = word[$0FA0 + i*2]`. This indirection is the
+heart of the native format — the packed player inlines these operands, the editor
+reads through the array. **Two independent readers agree byte-for-byte**: SID
+Factory II ([`converter_jch.cpp`][sf2], as scattered `$0Fxx` reads) and
+CheeseCutter 0.5.1 ([`src/vsong.d`][cc], as the `$0FA0`-indexed array — the
+clearer model):
 
-| Addr | Points at |
-| ---- | --------- |
-| `$0FA6` | init-data base; **default tempo byte = word[$0FA6] + 6** |
-| `$0FBA` | fine-tune (speed/pitch) table |
-| `$0FBC` | wave table |
-| `$0FC0` | filter table |
-| `$0FC2` | pulse table |
-| `$0FC4` | instrument table |
-| `$0FC6` | order list, voice 1 |
-| `$0FC8` | order list, voice 2 |
-| `$0FCA` | order list, voice 3 |
-| `$0FCC` | sequence-vector low-byte table |
-| `$0FCE` | sequence-vector high-byte table |
-| `$0FD0` | command table |
-| `$0FEE` | 4 ASCII version bytes, NP20 = `'2' '0' '.' 'G'` |
+| `i` | Addr | Points at |
+| --- | ---- | --------- |
+| `2` | `$0FA4` | info string (song name at `+1`, 30 bytes) |
+| `3` | `$0FA6` | init-data base; **default tempo byte = `ptr[3] + 6`** |
+| `$0D` | `$0FBA` | fine-tune table |
+| `$0E` | `$0FBC` | **wave table** (col 1 at `+0`, col 2 at `+256`) |
+| `$10` | `$0FC0` | **filter table** (first 4 bytes = break-speed table) |
+| `$11` | `$0FC2` | **pulse table** |
+| `$12` | `$0FC4` | **instrument table** (256 bytes → 32 × 8-byte records) |
+| `$13/$14/$15` | `$0FC6/8/A` | **order list** voice 0 / 1 / 2 (`$400` bytes each) |
+| `$16` | `$0FCC` | **sequence-pointer LOW** table |
+| `$17` | `$0FCE` | **sequence-pointer HIGH** table |
+| `$18` | `$0FD0` | **super / command table** |
+| — | `$0FEE` | **5** ASCII version bytes (`"20.G4"`, `"21.G5"`; `npversion = atoi(first 2)`) |
 
-Sequence address: `seq_addr[i] = (hi_table[i] << 8) | lo_table[i]`.
-Tempo special case: if the default tempo byte `< 2` (multispeed / funktempo),
-real values come from `filter_table+1` / `filter_table+0`.
+Sequence address: `seq_addr[i] = (hi_table[i] << 8) | lo_table[i]` (up to `$68`
+sequences, `$60` rows each, 256-byte span). Tempo special case: if the default
+tempo byte `< 2` (break-speed / funktempo), real values come from the filter
+table's first entry (`filter+1` / `filter+0`).
 
-> NP22-25: **verify the version magic string and every offset** against the real
-> player in the `.d64` — the converter's gate accepts only `"20.G"`, so NP22-25
-> may use a different string and/or shifted offsets. **[G]**
+> NP22-25: the array layout is stable across 20.g4 → 21.g5 (Laxity kept it
+> deliberately, see below); **confirm only the version-magic string** (likely
+> `"22.G*"`–`"25.G*"`) and any late index additions against the release `.d64`.
+> **[G]**
 
 ## Table memory map (JCH 20.G4 cross-check) [V]
 
@@ -123,66 +126,78 @@ slot; `byte0 == $7F` ends. [Codebase64][cb64] refines the instrument-slot range
 
 ## Command / Super table [V]
 
-Verbatim from [`converter_jch.cpp`][sf2]: two columns, **row-major** on disk;
-`col2 = col1 + row_count`; opcode = `byte & $F0`; **`$E0` = tempo** (value in the
-paired column). SF2 transposes to column-major on import. The Super table lets
-one `$C0`–`$DF` sequence byte stack several effects on a channel; the full
-NP22-25 opcode list is only in `NP22-25 docs.doc`. **[G]**
+Two columns, **row-major** on disk (`col2 = col1 + row_count`), from
+[`converter_jch.cpp`][sf2]. A `$C0`–`$DF` sequence byte indexes it; each entry is
+a `(cmd, param)` pair. Full opcode list, verified from Laxity's NP21 spy spec
+([`21.g5_Final.txt`][cc], "same as 20.g4" for the shared ones):
 
-## Instrument / wave / pulse / filter tables
+| entry `cmd param` | effect |
+| ----------------- | ------ |
+| `0x yy` | slide up, speed `$xyy` |
+| `2x yy` | slide down, speed `$xyy` |
+| `4x yy` (`40`–`5f`) | invoke instrument `x` (`0`–`$1F`) with alt wave-table pointer `yy` |
+| `60 xy` | vibrato, `x` = frequency, `y` = amplitude |
+| `8x xx` | portamento, speed `$xxx` |
+| `9x yy` | set AD-`x` / SR-`yy` (persistent) |
+| `ax yy` | set AD-`x` / SR-`yy` directly (one-shot) |
+| `c0 xx` | set channel wave pointer directly to `xx` |
+| `dx yy` | `x=0` filter-table ptr `yy`; `x=1` absolute filter value; `x=2` pulse-table ptr |
+| `e0 xx` | set speed `xx` |
+| `f0 xx` | set master volume `xx` |
 
-`converter_jch.cpp` does **not** hard-code these layouts: it `CopyTable`s
-wave/pulse/filter byte-for-byte and `CopyTableRowToColumnMajor`s the instrument
-table, taking every **row/column count from the SF2 driver metadata**
-(`DriverInfo::TableDefinition` for `sf2driver_np20`), not from the JCH file. So
-this source fixes the table *geometry* (bytes-per-record = the NP20 driver's
-column count) but not the per-byte *meaning*.
+`$1x`/`$3x`/`$7x`/`$bx` are unassigned. NP20's `$C0`-bucket classification (used
+by `v20player`/`extract`) is the 20.g4 dialect of this same table. **[G]** V22–V25
+may add opcodes — confirm from `NP22-25 docs.doc`.
 
-The per-byte **field meaning is already recovered in this repo's own RE** of an
-NP20-family tune (`re-trackers/JCH_NewPlayer/jch-architecture.md` §3), and is
-what `pyjch/extract.py` decodes: an **8-byte** instrument record
-`AD, SR, wavspd/flags, filt, fprog, pwstart, wstart, wstart2`. The two remaining
-unknowns for a byte-exact *editor* record are (a) any editor-only trailing bytes
-(e.g. a 16-char name field) beyond the 8 the player consumes, and (b) NP22-25 vs
-NP20 deltas — both resolved only from the `.d64`. GoatTracker v2 (JCH-derived)
-is a cross-check for the field semantics, not a literal layout:
+## Instrument record (8 bytes) [V]
 
-GoatTracker structural model ([readme §6.2][gt2]) — instrument fields:
+Verified from Laxity's NP21 spec ([`21.g5_Final.txt`][cc], stated "same layout as
+20.g4") and CheeseCutter's loader ([`vsong.d`][cc], `instrtbl[i*8 + n]`); the
+256-byte table holds up to **32** records. This matches what `pyjch/extract.py`
+already decodes from this repo's own RE:
 
 | off | field |
 | --- | ----- |
-| +0 | attack/decay |
-| +1 | sustain/release |
-| +2 | wavetable pointer (`$00` = stop) |
-| +3 | pulsetable pointer (`$00` = untouched) |
-| +4 | filtertable pointer (`$00` = untouched) |
-| +5 | vibrato param (speed-table index) |
-| +6 | vibrato delay (`$00` disables) |
-| +7 | gateoff / hard-restart timer; bit `$80` disables HR, `$40` disables gateoff |
-| +8 | 1st-frame waveform (usually `$09`); `$00` leave, `$FE` gate off, `$FF` gate on |
+| +0 | **AD** (attack/decay) |
+| +1 | **SR** (sustain/release) |
+| +2 | **restart / wave-count**: low nibble = wave-table dwell; high nibble = restart mode (`$8x` hard, `$4x` soft/gate-off, `$2x` Laxity hard [needs bit7], `$1x` wave-generator reset; `$8x`+`$1x` combine; `$00` = gate off 3 frames before next note) |
+| +3 | **filter setting**: low nibble = pass band, high nibble = resonance (non-zero enables filter on the channel) |
+| +4 | **filter-table pointer** (`$00` + non-zero +3 → static filter, table routine off) |
+| +5 | **pulse-table pointer** |
+| +6 | **pulse property**: bit0 = pulse table reset only on instrument-set; bit1 = filter table reset only on instrument-set |
+| +7 | **wave-table pointer** |
 
-Table block on disk (GoatTracker form): `+0` = row count `n`, then `n`
-left-column bytes, then `n` right-column bytes.
+**20.g4 → 21 delta [V]:** 20.g4 additionally used byte +2 **bit6 = absolute-freq
+(drum) mode** and a second wave-start copy at +6/+7 for note-off; NP21 dropped both
+(21 fixed the tie-note handling differently). `v20player`/`extract` decode the
+**20.g4** dialect (bit6 abs-freq, +6/+7 = `wstart`/`wstart2`) — correct for the
+V20-build tunes they target; an NP21/22-25 emitter uses the +6 pulse-property /
++7 wave-pointer layout above.
 
-- **Wavetable** (2 cols): left = wave/ctrl (`$00` no change; `$01`–`$0F` delay;
-  `$10`–`$DF` waveform; `$E0`–`$EF` inaudible; `$F0`–`$FE` command; **`$FF`
-  jump**, right = target/`$00` stop); right = note (`$00`–`$5F` rel up;
-  `$60`–`$7F` rel down; `$80` keep; `$81`–`$DF` absolute C#0–B-7). Waveform bits:
-  `$01` gate, `$02` sync, `$04` ring, `$08` test, `$10` tri, `$20` saw, `$40`
-  pulse, `$80` noise.
-- **Pulse table**: left `$01`–`$7F` modulation step (right = signed speed);
-  `$8X`–`$FX` set pulse width; **`$FF` jump**.
-- **Filter table**: left `$00` set cutoff (right = value); `$01`–`$7F`
-  modulation (right = signed speed); `$80`–`$F0` set params (passband hi-nibble
-  `$90` LP / `$A0` BP / `$C0` HP; right = resonance / channel mask); **`$FF`
-  jump**.
-- **Speed table** (shared vibrato / portamento / funktempo groove): **no jump
-  markers**; funktempo = two alternating tempo bytes per row.
+## Wave / pulse / filter tables [V]
 
-## Pitch / frequency table [G]
+From `21.g5_Final.txt`; wave = two 256-byte columns, pulse/filter = 4 bytes/entry.
 
-A note → 16-bit-frequency lookup (adjustable A-4 pitch / SID clock). No public
-byte dump exists for the JCH/NP pitch table — read it from the `.d64` player.
+- **Wave table** — 2 bytes/tick `(xx=note, yy=waveform)`: `xx` bit7 set = absolute
+  note (transpose not applied); `xx == $80` = special (recompute base note +
+  transpose, for Hubbard-slide effects); `xx == $7F` = **jump** (`yy` = target
+  index); `xx == $7E` = **stop** (hold last entry). Slide/vibrato apply only where
+  `xx == $00`.
+- **Pulse table** — 4 bytes/entry `(xx, yy, zz, qq)`: `xx` = pulse value (hi
+  nibble = PW low part, lo nibble = PW high part; `$FF` = keep current); `yy` =
+  count; `zz` = duration bits0-6 + direction bit7; `qq` = **next entry (absolute
+  index)**.
+- **Filter table** — 4 bytes/entry `(xx, yy, zz, qq)`: **the first entry is the
+  break-speed table** (see below); otherwise `xx` = filter value (`$FF` = keep);
+  `yy` = count; `zz` = duration; `qq` = next entry (absolute index).
+
+## Speed / break-speed table [V]
+
+Speeds `$00`/`$01` are "break speeds": the player looks the real speed up in the
+**filter table's first entry** (≤ 4 values, wrap on a `$00` byte); `$01` clamps to
+`$02`. This is the shared vibrato / portamento / funktempo groove source. **[G]**
+the note→16-bit-frequency **pitch table** bytes are engine-internal and still
+undumped — read from the `.d64` player.
 
 ## Editor capacities (ED3.04 / NP20.G4) [V]
 
@@ -282,8 +297,8 @@ format (as opposed to merely *detecting* or *playing* JCH tunes):
 
 | Project | R/W | Notes |
 | ------- | --- | ----- |
-| **CheeseCutter** (0-series / v1.x) | **read + write** | A cross-platform port of the JCH Editor; its early "0-series" targeted JCH-Editor compatibility — "most JCH Editor files are compatible with the early versions." The fullest open-source JCH read/write. **v2.x dropped JCH compatibility** for its own packed `.ct` format. Player driver: `src/c64/player_v4.acme`. Repos: [theyamo/CheeseCutter][cc], mirror [localhost/CheeseCutter][ccm]. **[V]** |
-| **SID Factory II** — `converter_jch.cpp` | **read** (import) | Imports a JCH NewPlayer `.prg` (gated to version string `"20.G"`) into SF2; the single best machine-readable NP20 format spec. **No JCH writer** (SF2 saves its own format). [source][sf2]. **[V]** |
+| **CheeseCutter 0.5.1** (0-series) | **read + write** | A cross-platform port of the JCH Editor: `src/vsong.d` `open()`/`save()` read *and write* native `.prg` files at `$0F00`, and it **bundles Laxity's NP21 format spec** `doc/21.g5_Final.txt` — the primary source for the tables/opcodes above. The fullest open-source JCH read/write. **v2.x dropped JCH** for its own packed `.ct`. Source tarball [`ccutter-0.5.1.tar.gz`][cc]; live repo [theyamo/CheeseCutter][ccgit] is 2.x. **[V]** |
+| **SID Factory II** — `converter_jch.cpp` | **read** (import) | Imports a JCH NewPlayer `.prg` (gated to `"20.G"`) into SF2; cross-confirms the pointer array + order/sequence/command encodings. **No JCH writer**. [source][sf2]. **[V]** |
 | **pyjch** (this repo) | **read** (structural) | Recovers the per-tune tables (subtune/order/pattern/instrument/wave/pw/filter) statically; the only standalone Python JCH reader. An editor-native *writer* is the export target this doc scopes. |
 | **GoatTracker v2** | — | Not a JCH file reader/writer (own `.sng`), but JCH-*derived* (built "to resemble JCH NewPlayer 21"); used above only as a structural model. [readme][gt2]. |
 | **sidid / player-id** | detect only | 6502-code fingerprints that classify JCH NewPlayer versions; no table parsing. [sidid][sidid]. |
@@ -294,23 +309,21 @@ for release) and **Syndrom's JCH-depacker** (packed → editor format). No
 
 ## Open gaps to close from the release files
 
-Resolved from `converter_jch.cpp` (NP20, verified from its read loops): the
-`$0Fxx` offsets, `"20.G"` magic, the editor order-list `(0x20+transpose, seq)`
-pair encoding + `$FF` terminator, the sequence `byte0>=$C0`=command / else
-instrument / `$7F`=end rule, and the 2-column row-major command table (`$E0`
-tempo). Still open, and only in the release binaries:
+Two independent primary sources — SF2 `converter_jch.cpp` and CheeseCutter 0.5.1
+(`vsong.d` + the bundled `21.g5_Final.txt`) — now **agree** on and fix: the
+`$0FA0` pointer array, the 5-char version magic, the **8-byte instrument record**,
+the wave/pulse/filter byte encodings, the full super-command list, the order-list
+`(0x20+transpose, seq)` pairs, and the sequence `byte0>=$C0`/`$7F` rule. What is
+still genuinely open, only in the release binaries:
 
-1. NP22-25 version-magic string and whether the `$0Fxx` offsets shifted vs NP20.
-2. Table **geometry** — bytes-per-instrument and wave/pulse/filter row/column
-   counts — is taken from the SF2 NP20 driver definition (`DriverInfo`); confirm
-   it matches NP22-25, and whether editor records carry trailing (name) bytes
-   beyond the 8 the player consumes.
-3. Pitch-table bytes.
-4. Exact packed→editor transpose mapping; loop-vs-stop restart beyond `$FF`.
-5. Full Super-table opcode list; V22–V25 vs V1–V21 table/command deltas.
+1. NP22-25 exact **version-magic string** (likely `"22.G*"`–`"25.G*"`) and any
+   opcode/field deltas the NP22-25 manual (`NP22-25 docs.doc`) adds over NP21.
+2. The **pitch table** bytes (engine-internal; not dumped by either reader).
+3. The precise **packed→editor** transform the closed-source JCH-Packer applies
+   (pyjch recovers the packed runtime form; the editor form is documented above).
 
-Tools: **JC64dis** disassembler for the `.d64`; the SF2 `converter_jch.cpp` as a
-working NP20 parser to invert.
+Tools: **JC64dis** disassembler for the `.d64`; CheeseCutter 0.5.1 `vsong.d` and
+SF2 `converter_jch.cpp` as two working readers to invert.
 
 ## Sources
 
@@ -320,8 +333,8 @@ working NP20 parser to invert.
 - GoatTracker v2 readme (JCH-derived structural model): <https://raw.githubusercontent.com/leafo/goattracker2/master/readme.txt> [gt2]
 - Editor capacities: <http://chordian.net/c64editors.htm> [cap]
 - sidid / player-id signatures: <https://github.com/cadaver/sidid/blob/master/sidid.cfg>, <https://github.com/WilfredC64/player-id>
-- CheeseCutter (0-series JCH-Editor port; read+write): <https://github.com/theyamo/CheeseCutter>, mirror <https://github.com/localhost/CheeseCutter>, driver <https://raw.githubusercontent.com/theyamo/CheeseCutter/master/src/c64/player_v4.acme>
-- CheeseCutter as a cross-platform port of JCH-Editor / 0-series JCH compatibility: <https://chipmusic.org/forums/topic/3753/cheesecutter-crossplatform-port-of-jcheditor>, <https://battleofthebits.com/lyceum/View/CheeseCutter>
+- **CheeseCutter 0.5.1 source (verified; `src/vsong.d` reader/writer + bundled `doc/21.g5_Final.txt` NP21 spec by Laxity)**: release <https://csdb.dk/release/?id=102245>, tarball <http://csdb.dk/getinternalfile.php/136516/ccutter-0.5.1.tar.gz>, JCH depacker <http://csdb.dk/getinternalfile.php/136517/depack-jch20g4.zip>
+- CheeseCutter live repo (2.x, JCH dropped) / port history: <https://github.com/theyamo/CheeseCutter>, <https://chipmusic.org/forums/topic/3753/cheesecutter-crossplatform-port-of-jcheditor>
 - CSDb forum (raw prg, init=$1000/play=$1003): <https://csdb.dk/forums/index.php?roomid=10&topicid=5698>
 - JCH version history: <https://blog.chordian.net/2018/06/29/from-jchs-special-collection/>
 - JC64dis disassembler: <https://iceteam.itch.io/jc64dis>
@@ -331,6 +344,6 @@ working NP20 parser to invert.
 [cb64]: https://codebase64.com/doku.php?id=base:jch_20.g4_player_file_format
 [gt2]: https://raw.githubusercontent.com/leafo/goattracker2/master/readme.txt
 [cap]: http://chordian.net/c64editors.htm
-[cc]: https://github.com/theyamo/CheeseCutter
-[ccm]: https://github.com/localhost/CheeseCutter
+[cc]: http://csdb.dk/getinternalfile.php/136516/ccutter-0.5.1.tar.gz
+[ccgit]: https://github.com/theyamo/CheeseCutter
 [sidid]: https://github.com/cadaver/sidid/blob/master/sidid.cfg
