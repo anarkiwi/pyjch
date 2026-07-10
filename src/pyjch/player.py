@@ -20,23 +20,20 @@ registers afterwards).
 
 from typing import List, Optional
 
+from pysidtracker import SID_BASE, MemPlayer
+
 from pyjch import constants
 from pyjch.model import Song
 
-_D400 = 0xD400
+_D400 = SID_BASE
 
 
-class Player:
+class Player(MemPlayer):
     """Play a :class:`~pyjch.model.Song` one frame at a time."""
 
     # pylint: disable=too-many-instance-attributes  # full player machine state
     def __init__(self, song: Song, subtune: int = 0):
         self._song = song
-        self._load = song.load_addr
-        # 64K memory; place the image at its load address.
-        self._mem = bytearray(0x10000)
-        for i, byte in enumerate(song.image):
-            self._mem[(self._load + i) & 0xFFFF] = byte
         # Per-tune discovered values (already resolved by the reader).
         self._init_ad = song.init_ad
         self._init_sr = song.init_sr
@@ -44,16 +41,7 @@ class Player:
         self._gateoff_ctrl = song.gateoff_ctrl
         self._subptr_lo = song.subptr_lo
         self._subptr_hi = song.subptr_hi
-        self.regs = [0] * constants.SID_REGISTERS
-        self._last_regs: Optional[List[int]] = None
-        self._init(subtune)
-
-    # -- raw memory access -----------------------------------------------
-    def _rd(self, addr: int) -> int:
-        return self._mem[addr & 0xFFFF]
-
-    def _wr(self, addr: int, val: int) -> None:
-        self._mem[addr & 0xFFFF] = val & 0xFF
+        super().__init__(song.image, song.load_addr, subtune)
 
     # -- init: FUN_1060(subtune) -----------------------------------------
     def _init(self, subtune: int = 0) -> None:
@@ -97,7 +85,6 @@ class Player:
         for x in range(3):
             m[(load + constants.WORK_GATE_CTR + x) & 0xFFFF] = 0xFF
             m[(load + constants.WORK_GATE_RELOAD + x) & 0xFFFF] = 0x03
-        self._snapshot_regs()
 
     # -- play: FUN_10e8 --------------------------------------------------
     def _frame(self) -> None:
@@ -253,29 +240,6 @@ class Player:
                 self._inc_fb()
                 return
 
-    # -- frame output / public API ---------------------------------------
-    def _snapshot_regs(self) -> None:
-        self.regs = [self._mem[_D400 + i] for i in range(constants.SID_REGISTERS)]
-
-    def play_frame(self) -> List[tuple]:
-        """Run one player tick; return this frame's SID register writes.
-
-        The first frame returns all 25 registers; later frames return only
-        registers whose value changed.
-        """
-        self._frame()
-        self._snapshot_regs()
-        if self._last_regs is None:
-            writes = list(enumerate(self.regs))
-        else:
-            writes = [
-                (reg, value)
-                for reg, (value, last) in enumerate(zip(self.regs, self._last_regs))
-                if value != last
-            ]
-        self._last_regs = list(self.regs)
-        return writes
-
 
 def iter_frames(song: Song, max_frames: Optional[int] = None):
     """Yield per-frame register write lists for ``song``.
@@ -283,18 +247,9 @@ def iter_frames(song: Song, max_frames: Optional[int] = None):
     Stops after ``max_frames`` frames (required for a non-looping render,
     since the JCH player loops forever).
     """
-    player = Player(song)
-    frame = 0
-    while max_frames is None or frame < max_frames:
-        yield player.play_frame()
-        frame += 1
+    return Player(song).iter_frames(max_frames)
 
 
 def render_grid(song: Song, nframes: int) -> List[List[int]]:
     """Render ``nframes`` of forward-filled per-frame register snapshots."""
-    player = Player(song)
-    rows: List[List[int]] = []
-    for _ in range(nframes):
-        player.play_frame()
-        rows.append(player.regs[:])
-    return rows
+    return Player(song).render_grid(nframes)

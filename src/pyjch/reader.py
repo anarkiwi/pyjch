@@ -21,12 +21,11 @@ discovers those idioms; when they are absent it raises -- it does not
 silently return garbage from a foreign player.  See ``docs/versions.md``.
 """
 
-from pathlib import Path
 from typing import Any, Optional, Tuple
 
 from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
 from pysidtracker import SidParseError as _BaseSidParseError
-from pysidtracker import find_code_first
+from pysidtracker import find_code_first, read_bytes, resolve_entry_points
 
 from pyjch import constants, newplayer
 from pyjch.errors import SidParseError
@@ -42,23 +41,14 @@ def _parse_container(
     except _BaseSidParseError as exc:
         raise SidParseError(str(exc)) from exc
     header = img.header
-    if header is None:
-        # Bare .prg: 2-byte little-endian load address + image.
-        return (
-            img.load,
-            constants.DEFAULT_INIT,
-            constants.DEFAULT_PLAY,
-            "",
-            "",
-            "",
-            img.image,
-            img.container,
-            img,
-        )
     load = img.load
-    # Header init/play of 0 mean "same as load" for JCH NewPlayer tunes.
-    init = header.init_address or load
-    play = header.play_address or load
+    # Header init/play of 0 mean "same as load"; a bare .prg has no header, so
+    # the JCH NewPlayer defaults apply.
+    init, play = resolve_entry_points(
+        header, load, constants.DEFAULT_INIT, constants.DEFAULT_PLAY
+    )
+    if header is None:
+        return (load, init, play, "", "", "", img.image, img.container, img)
     return (
         load,
         init,
@@ -207,13 +197,7 @@ def _subtune_count(data: bytes) -> int:
 
 def read(src):
     """Read a JCH NewPlayer tune from a path, bytes, or file-like object."""
-    if isinstance(src, bytes):
-        return parse(src)
-    if isinstance(src, (str, Path)):
-        return parse(Path(src).read_bytes())
-    if hasattr(src, "read"):
-        return parse(src.read())
-    raise TypeError(f"cannot read a song from {type(src).__name__}")
+    return parse(read_bytes(src))
 
 
 # Canonical JCH_NewPlayer_V0x init signature: STA $D405 ; STA $D40C (seed the

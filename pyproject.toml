@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyjch"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pure-Python reader and player for JCH NewPlayer C64 SID songs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,16 +20,14 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.4",
+    "pysidtracker>=0.5.0",
+    "py65>=1.1",
 ]
 
 [project.optional-dependencies]
-# Runtime (read/play/register logs) is pure stdlib; py65 is a test-only 6502
-# used to generate the V20 byte-exact register oracle.
 dev = [
     "black>=24",
     "pylint>=3",
-    "py65>=1.1",
     "pytest>=7",
     "pytest-cov>=4",
     "pytest-xdist>=3",

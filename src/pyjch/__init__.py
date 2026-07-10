@@ -29,7 +29,7 @@ from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
 from pyjch.v20player import V20Player, playable as v20_playable
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "EditorProfile",
