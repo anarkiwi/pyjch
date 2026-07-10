@@ -9,15 +9,14 @@ header pointer block + 5-char version magic + default tempo, and emit a
 
 One :class:`EditorProfile` carries the layout; NP20-25 share it byte-for-byte
 (verified against the four NP22-25 songs on the release ``.d64``) and differ
-only in the ``$0FEE`` version magic.  Tables that share the packed and editor
-encodings transfer verbatim (instruments, wave cols, pulse/filter, command
-table, pitch).  Two encodings are genuine packed->editor gaps:
-
-* order lists -- the packed transpose baseline is unconfirmed, so the recovered
-  ``OrderEntry.transpose`` byte is emitted verbatim (a note is recorded);
-* sequences -- the closed-source packer's variable stream is re-encoded
-  best-effort to editor ``(byte0, note)`` pairs; a packed control byte with no
-  single-pair form is dropped and recorded in :attr:`Provenance.notes`.
+only in the ``$0FEE`` version magic.  The packer does **not** re-encode musical
+data (see ``docs/editor-format.md`` *Packer transform*): sequences, order lists,
+instruments, wave/pulse/filter/command and pitch tables are byte-identical
+between packed and editor forms.  So export copies the recovered bytes
+**verbatim** into the page-aligned editor layout and rebuilds only the structure
+around them: the ``$0FA0`` pointer array, the sequence lo/hi pointer tables, the
+``$0FEE`` magic and the default tempo.  No sequence re-encoding, no order
+transpose-baseline synthesis.
 
 The default empty ``driver`` yields a zero-filled player region: structurally
 valid (correct pointer block / tables), but not runnable without a stock driver.
@@ -27,7 +26,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 from pyjch.errors import SidParseError
-from pyjch.songmodel import OrderList, Tune
+from pyjch.songmodel import Tune
 
 _MAX_INSTRUMENTS = 32
 _MAX_SUBTUNES = 31
@@ -35,9 +34,6 @@ _MAX_PATTERNS = 114
 _MAX_ROWS = 96
 _MAX_TABLE = 256
 
-_SEQ_END = 0x7F
-_SEQ_NOOP = 0x80
-_ORDER_END = 0xFF
 _TOP = 0x10000
 
 
@@ -122,47 +118,6 @@ def np_profile(version: int) -> EditorProfile:
         raise SidParseError(f"no editor profile for NP version {version}") from exc
 
 
-def _encode_order(order: OrderList) -> List[int]:
-    """Editor ``(transpose, seq_index)`` pairs; ``$FF`` transpose terminates.
-
-    The recovered transpose is emitted verbatim: the packed->editor baseline is
-    an unconfirmed packer transform (see docs/editor-format.md).
-    """
-    out: List[int] = []
-    for entry in order.entries:
-        out += [entry.transpose & 0xFF, entry.pattern & 0xFF]
-    out.append(_ORDER_END)
-    return out
-
-
-def _encode_sequence(index: int, events) -> Tuple[List[int], List[str]]:
-    """Best-effort packed pattern stream -> editor ``(byte0, note)`` pairs.
-
-    Folds a preceding instrument select (``$A0-$BF``) into the next note's
-    ``byte0``; emits a command (``$C0+``) as its own row; a packed ``$80-$9F``
-    control byte has no single editor-pair form and is dropped + noted.
-    """
-    out: List[int] = []
-    notes: List[str] = []
-    pending = _SEQ_NOOP
-    for event in events:
-        raw = event.raw
-        if event.note is not None:
-            out += [pending, raw]
-            pending = _SEQ_NOOP
-        elif 0xA0 <= raw <= 0xBF:
-            pending = raw
-        elif raw >= 0xC0:
-            out += [raw, 0x00]
-        else:
-            notes.append(
-                f"sequence {index}: packed control byte ${raw:02X} has no single "
-                "editor-pair form (dropped)"
-            )
-    out.append(_SEQ_END)
-    return out, notes
-
-
 def _check_capacity(tune: Tune) -> None:
     if len(tune.instruments) > _MAX_INSTRUMENTS:
         raise SidParseError(f"too many instruments ({len(tune.instruments)} > 32)")
@@ -196,7 +151,7 @@ def _fits(data: List[int], limit: int, what: str) -> List[int]:
     return data
 
 
-def _lay_tables(tune: Tune, profile: EditorProfile, poke, notes: List[str]) -> None:
+def _lay_tables(tune: Tune, profile: EditorProfile, poke) -> None:
     wave = tune.wavetable
     poke(profile.base_wave_note, _fits(wave.note_col, _MAX_TABLE, "wave note col"))
     poke(profile.base_wave_ctrl, _fits(wave.ctrl_col, _MAX_TABLE, "wave ctrl col"))
@@ -216,29 +171,26 @@ def _lay_tables(tune: Tune, profile: EditorProfile, poke, notes: List[str]) -> N
     for index, inst in enumerate(tune.instruments):
         poke(profile.base_inst + index * 8, inst.raw[:8])
     if tune.subtunes:
-        notes.append("order-list transpose emitted verbatim (packer baseline unknown)")
         for voice, order in enumerate(tune.subtunes[0].order_lists):
-            data = _encode_order(order)
+            data = order.raw  # verbatim: carries transpose + $FF/$FE terminator
             if len(data) > profile.order_stride:
                 raise SidParseError(
                     f"order list voice {voice} overflows "
                     f"({len(data)} > {profile.order_stride} bytes)"
                 )
             poke(profile.base_order[voice], data)
-    _lay_sequences(tune, profile, poke, notes)
+    _lay_sequences(tune, profile, poke)
 
 
-def _lay_sequences(tune: Tune, profile: EditorProfile, poke, notes: List[str]) -> None:
+def _lay_sequences(tune: Tune, profile: EditorProfile, poke) -> None:
     addr = profile.base_seq
-    for index, events in enumerate(tune.patterns):
-        data, seq_notes = _encode_sequence(index, events)
-        notes.extend(seq_notes)
-        if addr + len(data) > _TOP:
+    for index, raw in enumerate(tune.pattern_raw):
+        if addr + len(raw) > _TOP:
             raise SidParseError("sequence data overflows 64K image")
         poke(profile.base_seqlo + index, [addr & 0xFF])
         poke(profile.base_seqhi + index, [(addr >> 8) & 0xFF])
-        poke(addr, data)
-        addr += len(data)
+        poke(addr, raw)  # verbatim: source pattern bytes incl. $7F terminator
+        addr += len(raw)
 
 
 def _lay_pointers(tune: Tune, profile: EditorProfile, poke) -> None:
@@ -269,11 +221,10 @@ def write_editor_prg(
     """Assemble an editor-native ``.prg`` for ``tune`` at the profile's layout.
 
     Injects the caller-supplied stock ``driver`` prefix (default empty ->
-    zero-filled, non-runnable but structurally valid), lays the recovered tables
-    at ``profile``'s canonical bases, writes the ``$0FA0`` pointer block + 5-char
-    version magic + default tempo, and returns the 2-byte-load image.  Records
-    the order-transpose / dropped-sequence-byte gaps in
-    :attr:`~pyjch.songmodel.Provenance.notes`.  Raises
+    zero-filled, non-runnable but structurally valid), copies the recovered
+    sequence / order / table bytes **verbatim** to ``profile``'s canonical
+    bases, writes the ``$0FA0`` pointer block + 5-char version magic + default
+    tempo, and returns the 2-byte-load image.  Raises
     :class:`~pyjch.errors.SidParseError` on capacity overflow or when the tune
     lacks a table the editor form requires.
     """
@@ -288,10 +239,8 @@ def write_editor_prg(
 
     for offset, byte in enumerate(driver):
         mem[offset] = byte
-    notes: List[str] = []
-    _lay_tables(tune, profile, poke, notes)
+    _lay_tables(tune, profile, poke)
     _lay_pointers(tune, profile, poke)
-    tune.provenance.notes.extend(notes)
     size = max(mem) + 1 if mem else 0
     image = bytearray(size)
     for offset, byte in mem.items():

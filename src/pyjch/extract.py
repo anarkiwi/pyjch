@@ -47,6 +47,28 @@ from pyjch.songmodel import (
 
 _MAX_WALK = 512  # order-list / pattern length cap for the static walk
 
+
+def _raw_stream(model, addr: Optional[int], terminators) -> List[int]:
+    """Source bytes from ``addr`` through (and including) the first terminator.
+
+    A verbatim slice for faithful re-emit; needs only the base + terminators, so
+    it works for both the V20 tier and the family tier (no full decode). Empty
+    when ``addr`` is absent.
+    """
+    if addr is None:
+        return []
+    out: List[int] = []
+    for _ in range(_MAX_WALK):
+        byte = model._byte(addr)  # pylint: disable=protected-access
+        if byte is None:
+            break
+        out.append(byte)
+        addr += 1
+        if byte in terminators:
+            break
+    return out
+
+
 _COMMAND_HI = {
     0x60: CommandKind.VIBRATO,
     0x90: CommandKind.AD_OVERRIDE,
@@ -111,7 +133,8 @@ def _decode_orderlist(model, subtune: int, voice: int) -> OrderList:
             continue
         entries.append(OrderEntry(pattern=byte, transpose=transpose))
         transpose = 0
-    return OrderList(entries=entries, loops=loops, restart=0)
+    raw = _raw_stream(model, model.orderlist_ptr(subtune, voice), (0xFE, 0xFF))
+    return OrderList(entries=entries, loops=loops, restart=0, raw=raw)
 
 
 def _decode_pattern(model, base: Optional[int], cmdparam: Optional[int]):
@@ -199,11 +222,14 @@ def _collect(model, cmdparam: Optional[int]):
         subtunes.append(Subtune(lists, tempo=model.subtune_tempo(subtune) or 0))
     max_pat = max(pat_idx) if pat_idx else -1
     patterns: List[List[PatternEvent]] = []
+    pattern_raw: List[List[int]] = []
     inst_ref: Set[int] = {0}
     cmd_ref: Set[int] = set()
     for idx in range(max_pat + 1):
-        events = _decode_pattern(model, model.pattern_ptr(idx), cmdparam)
+        base = model.pattern_ptr(idx)
+        events = _decode_pattern(model, base, cmdparam)
         patterns.append(events)
+        pattern_raw.append(_raw_stream(model, base, (0x7F,)))
         for event in events:
             cmd = event.command
             if cmd is None:
@@ -212,7 +238,7 @@ def _collect(model, cmdparam: Optional[int]):
                 inst_ref.add(cmd.arg)
             if cmd.cmd_index is not None:
                 cmd_ref.add(cmd.cmd_index)
-    return subtunes, patterns, inst_ref, cmd_ref
+    return subtunes, patterns, pattern_raw, inst_ref, cmd_ref
 
 
 def _instruments(model, base: int, image_end: int, all_bases, inst_ref) -> List[int]:
@@ -237,7 +263,7 @@ def _instruments(model, base: int, image_end: int, all_bases, inst_ref) -> List[
 def _extract_v20(model, bases) -> Tune:
     load = model.load_addr
     end = load + len(model.image)
-    subtunes, patterns, inst_ref, cmd_ref = _collect(model, bases.cmdparam)
+    subtunes, patterns, pattern_raw, inst_ref, cmd_ref = _collect(model, bases.cmdparam)
     fixed = [
         bases.pitch,
         bases.subtune,
@@ -272,6 +298,7 @@ def _extract_v20(model, bases) -> Tune:
         hard_restart=bases.hardrestart,
         subtunes=subtunes,
         patterns=patterns,
+        pattern_raw=pattern_raw,
         instruments=instruments,
         wavetable=wavetable,
         pw_program=_records(pw, PwStep),
@@ -299,7 +326,7 @@ def _commands(model, cmdparam: int, cmd_ref: Set[int]) -> List[Command]:
 def _extract_family(model) -> Tune:
     load = model.load_addr
     end = load + len(model.image)
-    subtunes, patterns, inst_ref, _cmd_ref = _collect(model, cmdparam=None)
+    subtunes, patterns, pattern_raw, inst_ref, _cmd_ref = _collect(model, cmdparam=None)
     fixed = [
         model.subtune_table,
         model.patternptr_lo,
@@ -336,6 +363,7 @@ def _extract_family(model) -> Tune:
         hard_restart=None,
         subtunes=subtunes,
         patterns=patterns,
+        pattern_raw=pattern_raw,
         instruments=instruments,
         wavetable=wavetable,
         pw_program=[],

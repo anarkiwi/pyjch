@@ -69,7 +69,7 @@ def _pattern(events) -> List[PatternEvent]:
 
 def _order(data) -> OrderList:
     entries = [OrderEntry(e["pattern"], e["transpose"]) for e in data["entries"]]
-    return OrderList(entries, data["loops"], data["restart"])
+    return OrderList(entries, data["loops"], data["restart"], data["raw"])
 
 
 def _subtune(data) -> Subtune:
@@ -105,6 +105,7 @@ def from_json(text: str) -> Tune:
         hard_restart=data["hard_restart"],
         subtunes=[_subtune(s) for s in data["subtunes"]],
         patterns=[_pattern(p) for p in data["patterns"]],
+        pattern_raw=[list(p) for p in data["pattern_raw"]],
         instruments=[_instrument(i) for i in data["instruments"]],
         wavetable=_wavetable(data["wavetable"]),
         pw_program=[PwStep(**s) for s in data["pw_program"]],

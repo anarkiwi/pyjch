@@ -34,16 +34,6 @@ def _read_ptr(profile, word):
     return {i: word(profile.ptr_addr(i)) for i in range(0x02, 0x19)}
 
 
-def _decode_order(byte, base):
-    """Decode an editor order list back to ``(pattern, transpose)`` entries."""
-    out = []
-    addr = base
-    while byte(addr) != 0xFF:
-        out.append((byte(addr + 1), byte(addr)))
-        addr += 2
-    return out
-
-
 def test_roundtrip_np25_layout_and_tables():
     tune = _tune()
     profile = editor.NP25_PROFILE
@@ -72,36 +62,39 @@ def test_roundtrip_np25_layout_and_tables():
     assert ptr[profile.idx_seqhi] == profile.base_seqhi
     assert ptr[profile.idx_cmd] == profile.base_cmd
 
-    # tables sit byte-faithfully at their bases.
-    assert [
-        byte(profile.base_wave_note + i) for i in range(len(tune.wavetable.note_col))
-    ] == tune.wavetable.note_col
-    assert [byte(profile.base_inst + i) for i in range(8)] == tune.instruments[0].raw
-    assert [byte(profile.base_cmd + i) for i in range(2)] == [
-        tune.commands[0].lo,
-        tune.commands[0].hi,
-    ]
-    pitch = [byte(profile.base_pitch + i) for i in range(len(tune.pitch_table))]
-    assert pitch == tune.pitch_table
-    filt = tune.filter_program[0]
-    assert [byte(profile.base_filter + i) for i in range(4)] == [
-        filt.value,
-        filt.step,
-        filt.dwell,
-        filt.next_off,
-    ]
+    # every table sits byte-for-byte at its base (verbatim from the recovery).
+    def region(base, size):
+        return [byte(base + i) for i in range(size)]
 
-    # order lists decode back to the recovered (pattern, transpose) entries.
+    assert region(profile.base_wave_note, len(tune.wavetable.note_col)) == (
+        tune.wavetable.note_col
+    )
+    assert region(profile.base_wave_ctrl, len(tune.wavetable.ctrl_col)) == (
+        tune.wavetable.ctrl_col
+    )
+    for index, inst in enumerate(tune.instruments):
+        assert region(profile.base_inst + index * 8, 8) == inst.raw
+    cmd_bytes = [b for c in tune.commands for b in (c.lo, c.hi)]
+    assert region(profile.base_cmd, len(cmd_bytes)) == cmd_bytes
+    pulse = [
+        b for s in tune.pw_program for b in (s.reset, s.step, s.dir_rate, s.next_off)
+    ]
+    assert region(profile.base_pulse, len(pulse)) == pulse
+    filt = [
+        b for s in tune.filter_program for b in (s.value, s.step, s.dwell, s.next_off)
+    ]
+    assert region(profile.base_filter, len(filt)) == filt
+    assert region(profile.base_pitch, len(tune.pitch_table)) == tune.pitch_table
+
+    # order lists are emitted verbatim (source bytes incl. $FF/$FE terminator).
     for voice, order in enumerate(tune.subtunes[0].order_lists):
-        got = _decode_order(byte, profile.base_order[voice])
-        assert got == [(e.pattern, e.transpose) for e in order.entries]
+        assert region(profile.base_order[voice], len(order.raw)) == order.raw
 
-    # seq lo/hi tables resolve to the emitted, $7F-terminated pair streams.
-    for index, events in enumerate(tune.patterns):
+    # seq lo/hi tables resolve to the verbatim, $7F-terminated source bytes.
+    for index, raw in enumerate(tune.pattern_raw):
         seq = byte(profile.base_seqlo + index) | (byte(profile.base_seqhi + index) << 8)
-        expected, _notes = editor._encode_sequence(index, events)
-        assert [byte(seq + i) for i in range(len(expected))] == expected
-        assert expected[-1] == 0x7F
+        assert [byte(seq + i) for i in range(len(raw))] == raw
+        assert raw[-1] == 0x7F
 
 
 @pytest.mark.parametrize(
@@ -148,10 +141,3 @@ def test_missing_table_raises_clear_message():
     no_pitch = dataclasses.replace(tune, pitch_table=[])
     with pytest.raises(SidParseError, match="pitch table"):
         editor.write_editor_prg(no_pitch)
-
-
-def test_sequence_reencoding_records_dropped_control_bytes():
-    tune = _tune()
-    # pattern 4 carries a packed $83 duration byte with no editor-pair form.
-    _data, notes = editor._encode_sequence(4, tune.patterns[4])
-    assert any("83" in note for note in notes)

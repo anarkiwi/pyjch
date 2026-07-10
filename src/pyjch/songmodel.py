@@ -86,11 +86,17 @@ class OrderEntry:
 
 @dataclass
 class OrderList:
-    """A voice order list: its entries, whether it loops, and the restart step."""
+    """A voice order list: its entries, whether it loops, and the restart step.
+
+    ``raw`` keeps the source order bytes (from the order base through the
+    ``$FF``/``$FE`` terminator) so export re-emits them verbatim -- the recovered
+    bytes already carry each step's transpose byte; no baseline is synthesised.
+    """
 
     entries: List[OrderEntry] = field(default_factory=list)
     loops: bool = False
     restart: int = 0
+    raw: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -183,6 +189,7 @@ class Tune:
     hard_restart: Optional[int]
     subtunes: List[Subtune]
     patterns: List[List[PatternEvent]]
+    pattern_raw: List[List[int]]
     instruments: List[Instrument]
     wavetable: Optional[WaveTable]
     pw_program: List[PwStep]
