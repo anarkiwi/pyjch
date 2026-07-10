@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from pyjch import reglog, v20player
-from pyjch.editor import write_editor_prg
+from pyjch.editor import np_profile, write_editor_prg
 from pyjch.errors import JCHError, SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
@@ -73,10 +73,9 @@ def _export(args) -> None:
     if args.format == "text":
         Path(args.output).write_text(to_text(tune), encoding="utf-8")
     elif args.format == "editor-prg":
-        if not args.driver:
-            raise SidParseError("--format editor-prg requires --driver PATH")
-        driver = Path(args.driver).read_bytes()
-        Path(args.output).write_bytes(write_editor_prg(tune, driver=driver))
+        driver = Path(args.driver).read_bytes() if args.driver else b""
+        prg = write_editor_prg(tune, driver=driver, profile=np_profile(args.np_version))
+        Path(args.output).write_bytes(prg)
     else:
         Path(args.output).write_text(to_json(tune), encoding="utf-8")
     print(f"wrote {args.output}")
@@ -102,6 +101,13 @@ def _parser() -> argparse.ArgumentParser:
     exp.add_argument("song", help="JCH NewPlayer .sid/.prg file")
     exp.add_argument("output", help="output file (.json/.txt/.prg)")
     exp.add_argument("--format", choices=("json", "text", "editor-prg"), default="json")
+    exp.add_argument(
+        "--np-version",
+        type=int,
+        choices=(20, 21, 22, 23, 24, 25),
+        default=25,
+        help="editor-prg NP version (default 25)",
+    )
     exp.add_argument("--driver", help="stock player .prg for --format editor-prg")
     exp.set_defaults(func=_export)
     return parser

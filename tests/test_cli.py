@@ -120,13 +120,24 @@ def test_export_editor_prg(tmp_path):
     assert prg[0] | (prg[1] << 8) == 0x0F00
 
 
-def test_export_editor_prg_requires_driver(capsys, tmp_path):
+def test_export_editor_prg_default_driver_and_version(tmp_path):
     out = tmp_path / "tune.prg"
     rc = cli.main(
-        ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+        [
+            "export",
+            str(_synth_sid(tmp_path)),
+            str(out),
+            "--format",
+            "editor-prg",
+            "--np-version",
+            "22",
+        ]
     )
-    assert rc == 1
-    assert "requires --driver" in capsys.readouterr().err
+    assert rc == 0
+    prg = out.read_bytes()
+    assert prg[0] | (prg[1] << 8) == 0x0F00
+    img = prg[2:]
+    assert bytes(img[0x0FEE - 0x0F00 : 0x0FEE - 0x0F00 + 5]) == b"22.4X"
 
 
 def test_requires_subcommand():
