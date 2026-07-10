@@ -23,7 +23,7 @@ from pyjch import reader, reglog, v20player  # noqa: E402
 from pyjch.errors import SidParseError  # noqa: E402
 from pyjch.newplayer import NewPlayerModel  # noqa: E402
 
-from tests._v20oracle import HAVE_PY65, oracle_grid  # noqa: E402
+from tests._v20oracle import oracle_grid  # noqa: E402
 
 # Deterministic V20 representatives across builds/authors: the RE reference
 # (contiguous tables), a relocated-table demo, and other-author tunes.
@@ -74,8 +74,6 @@ def test_v20_frame_exact(relpath):
     model = reader.parse(data)
     assert isinstance(model, NewPlayerModel)
     assert v20player.playable(model) is not None
-    if not HAVE_PY65:
-        pytest.skip("py65 not installed")
     oracle = oracle_grid(data, FRAMES)
     rendered = v20player.render_grid(model, FRAMES)
     assert len(rendered) == len(oracle) == FRAMES

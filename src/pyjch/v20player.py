@@ -25,6 +25,8 @@ replayable; validate against a py65 register oracle (see the corpus test).
 from dataclasses import dataclass
 from typing import List, Optional
 
+from pysidtracker import SID_BASE, MemPlayer
+
 # ----------------------------------------------------------------------------
 # Work-cell / global offsets relative to the code base (cb = init address).
 # Fixed by the V20 player binary; the discovery idioms below embed several of
@@ -100,8 +102,7 @@ SRSH = 0x7C2
 ADOVR = 0x7C5
 DELAYEN = 0x7CA
 
-D400 = 0xD400
-SID_REGISTERS = 25
+D400 = SID_BASE
 
 
 def _find(image: bytes, prefix: bytes, suffix: bytes) -> Optional[int]:
@@ -229,7 +230,7 @@ def playable(model) -> Optional[V20Bases]:
     return discover_bases(model.load_addr, image, model)
 
 
-class V20Player:
+class V20Player(MemPlayer):
     """Replay a V20 :class:`~pyjch.newplayer.NewPlayerModel` frame by frame.
 
     Raises :class:`ValueError` if the model is not a V20 build (see
@@ -243,24 +244,17 @@ class V20Player:
         if bases is None:
             raise ValueError("not a byte-exact-replayable JCH NewPlayer V20 tune")
         self.b = bases
-        self.mem = bytearray(0x10000)
-        for i, byte in enumerate(model.image):
-            self.mem[(model.load_addr + i) & 0xFFFF] = byte
         self.cb = model.init_addr
-        self._last: Optional[List[int]] = None
-        self._init(subtune)
+        super().__init__(model.image, model.load_addr, subtune)
 
     # -- raw access ------------------------------------------------------
-    def _wr(self, addr: int, val: int) -> None:
-        self.mem[addr & 0xFFFF] = val & 0xFF
-
     def _ind(self, y: int) -> int:
-        ptr = self.mem[0xFB] | (self.mem[0xFC] << 8)
-        return self.mem[(ptr + y) & 0xFFFF]
+        ptr = self._mem[0xFB] | (self._mem[0xFC] << 8)
+        return self._mem[(ptr + y) & 0xFFFF]
 
     # -- init ------------------------------------------------------------
     def _init(self, subtune: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         y = (subtune << 3) & 0xFF
         for x in range(3):
             v = m[b.subtune + y]
@@ -290,33 +284,14 @@ class V20Player:
         m[cb + GRVIDX] = 1
         m[cb + GRVCTR] = 3
         m[cb + VOL] = 0x0F
-        self._snapshot()
 
     # -- one frame -------------------------------------------------------
-    def play_frame(self) -> List[tuple]:
-        """Run one tick; return ``(reg, value)`` writes changed this frame."""
-        self._frame()
-        self._snapshot()
-        if self._last is None:
-            writes = list(enumerate(self.regs))
-        else:
-            writes = [
-                (r, v)
-                for r, (v, last) in enumerate(zip(self.regs, self._last))
-                if v != last
-            ]
-        self._last = list(self.regs)
-        return writes
-
-    def _snapshot(self) -> None:
-        self.regs = [self.mem[D400 + i] for i in range(SID_REGISTERS)]
-
     def grid_row(self) -> List[int]:
         """The 25 SID registers ``$D400..$D418`` after the last frame."""
-        return [self.mem[D400 + i] for i in range(SID_REGISTERS)]
+        return self.snapshot()
 
     def _frame(self) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         g = (m[cb + GRVCTR] - 1) & 0xFF
         m[cb + GRVCTR] = g
         if g & 0x80:
@@ -350,7 +325,7 @@ class V20Player:
 
     # -- note fetch (order/pattern sequencer) ----------------------------
     def _fetch(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         m[0xFB] = m[cb + ORDLO + x]
         m[0xFC] = m[cb + ORDHI + x]
         m[cb + NDELAY + x] = 0
@@ -373,7 +348,7 @@ class V20Player:
             return
 
     def _command(self, x: int, a: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         hi = a & 0xE0
         if hi == 0x80:
             m[cb + NDELAY + x] = a & 0x10
@@ -419,7 +394,7 @@ class V20Player:
         m[cb + PATCUR + x] = (m[cb + PATCUR + x] + 1) & 0xFF
 
     def _note(self, x: int, b: int) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         base = self.b
         if b == 0:  # rest / tie
             m[cb + NDELAY + x] = (m[cb + NDELAY + x] + 1) & 0xFF
@@ -445,7 +420,7 @@ class V20Player:
         self._after(x)
 
     def _after(self, x: int) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         m[cb + PATCUR + x] = (m[cb + PATCUR + x] + 1) & 0xFF
         nb = self._ind(m[cb + PATCUR + x])
         if nb == 0x7F:  # end of pattern
@@ -470,7 +445,7 @@ class V20Player:
         self._not_endpat(x)
 
     def _not_endpat(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         if m[cb + NDELAY + x] != 0:
             self._delayed(x)
             return
@@ -488,7 +463,7 @@ class V20Player:
         self._delayed(x)
 
     def _delayed(self, x: int) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         if m[cb + DELAYEN] != 0:
             m[cb + VIBSUP + x] = 1
             self._freq(x)
@@ -497,7 +472,7 @@ class V20Player:
 
     # -- note commit + instrument init -----------------------------------
     def _commit(self, x: int) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         m[cb + GATEMASK + x] = m[cb + STGGATE + x]
         m[cb + NOTE + x] = m[cb + STGNOTE + x]
         m[cb + OCT + x] = m[cb + STGTR + x]
@@ -516,7 +491,7 @@ class V20Player:
 
     def _inst_init(self, x: int) -> None:
         # pylint: disable=too-many-statements
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         y = m[cb + INST + x]
         m[cb + WTPTR + x] = m[b.instruments + 6 + y]
         wf = m[b.instruments + 2 + y]
@@ -573,7 +548,7 @@ class V20Player:
 
     # -- per-frame engine ------------------------------------------------
     def _engine(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         v = (m[cb + PWDW + x] - 1) & 0xFF
         m[cb + PWDW + x] = v
         if v & 0x80:
@@ -602,7 +577,7 @@ class V20Player:
         self._freq(x)
 
     def _filt_sweep(self) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         v = (m[cb + FLTDW] - 1) & 0xFF
         m[cb + FLTDW] = v
         if v & 0x80:
@@ -617,7 +592,7 @@ class V20Player:
         m[cb + FLTCUT] = (m[cb + FLTCUT] + m[b.filterprog + 1 + y]) & 0xFF
 
     def _freq(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         y = m[cb + INST + x]
         if m[b.instruments + 2 + y] & 0x40:  # absolute-freq mode
             yy = m[cb + WTPTR + x]
@@ -636,7 +611,7 @@ class V20Player:
         self._ctrl(x)
 
     def _freq_note(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         yy = m[cb + WTPTR + x]
         nb = m[b.wave_note + yy]
         hinote = False
@@ -670,7 +645,7 @@ class V20Player:
         m[cb + FHI + x] = (m[b.pitch + 1 + idx] + (1 if lo > 0xFF else 0)) & 0xFF
 
     def _ctrl(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         m[cb + CTRLSH + x] = m[b.wave_ctrl + m[cb + WTPTR + x]]
         v = (m[cb + WTDW + x] - 1) & 0xFF
         m[cb + WTDW + x] = v
@@ -680,7 +655,7 @@ class V20Player:
         self._porta(x)
 
     def _porta(self, x: int) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         if m[cb + PORTAEN + x] == 0:
             self._vibrato(x)
             return
@@ -703,7 +678,7 @@ class V20Player:
         self._blit(x)
 
     def _vibrato(self, x: int) -> None:
-        cb, m, b = self.cb, self.mem, self.b
+        cb, m, b = self.cb, self._mem, self.b
         if m[cb + VIBSUP + x] != 0 or m[cb + VIBEN + x] == 0:
             self._blit(x)
             return
@@ -742,7 +717,7 @@ class V20Player:
         self._blit(x)
 
     def _blit(self, x: int) -> None:
-        cb, m = self.cb, self.mem
+        cb, m = self.cb, self._mem
         m[cb + PORTAPEND + x] = 0
         m[cb + VIBEN2 + x] = 0
         m[cb + VIBSUP + x] = 0

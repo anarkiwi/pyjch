@@ -1,8 +1,9 @@
 """Command line interface: song info and register logs."""
 
 import argparse
-import sys
 from pathlib import Path
+
+from pysidtracker import add_reglog_command, print_info, run_cli
 
 from pyjch import reglog, v20player
 from pyjch.editor import np_profile, write_editor_prg
@@ -15,11 +16,14 @@ from pyjch.serialize import to_json, to_text
 
 
 def _info_common(song) -> None:
-    print(f"name:        {song.name}")
-    print(f"author:      {song.author}")
-    print(f"released:    {song.released}")
-    print(f"load:        ${song.load_addr:04X}")
-    print(f"init/play:   ${song.init_addr:04X} / ${song.play_addr:04X}")
+    print_info(
+        song.name,
+        song.author,
+        song.released,
+        song.load_addr,
+        song.init_addr,
+        song.play_addr,
+    )
 
 
 def _info_v0x(song: Song) -> None:
@@ -91,11 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     info.add_argument("song", help="JCH NewPlayer .sid/.prg file")
     info.set_defaults(func=_info)
 
-    log = commands.add_parser("reglog", help="write a SID register log")
-    log.add_argument("song", help="JCH NewPlayer .sid/.prg file")
-    log.add_argument("output", help="register log file to write")
-    log.add_argument("--seconds", type=float, default=60.0)
-    log.set_defaults(func=_reglog)
+    add_reglog_command(commands, _reglog, song_help="JCH NewPlayer .sid/.prg file")
 
     exp = commands.add_parser("export", help="export the recovered song model")
     exp.add_argument("song", help="JCH NewPlayer .sid/.prg file")
@@ -115,14 +115,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     """CLI entry point; returns a process exit code."""
-    args = _parser().parse_args(argv)
-    try:
-        args.func(args)
-    except (JCHError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    return 0
+    return run_cli(_parser, JCHError, argv)
 
 
 if __name__ == "__main__":
+    import sys
+
     sys.exit(main())

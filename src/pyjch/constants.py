@@ -19,8 +19,8 @@ SID_VOICE_OFFSET = _registers.SID_VOICE_OFFSET
 PW_HI_REGS = _registers.PW_HI_REGS
 
 SID_REGISTERS = SID_REG_COUNT  # $D400..$D418 (25 registers)
-VOICES = 3
-VOICE_REG_SIZE = 7
+VOICES = _registers.SID_VOICES
+VOICE_REG_SIZE = _registers.SID_VOICE_OFFSET[1]  # per-voice register stride (7)
 
 # Per-voice SID base offsets ($D400 + offset).
 SID_OFFSET = SID_VOICE_OFFSET

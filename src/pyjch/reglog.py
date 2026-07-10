@@ -13,8 +13,8 @@ from typing import Iterator
 from pysidtracker.reglog import (
     DEFAULT_WRITE_SPACING,
     RegWrite,
-    frame_writes,
     read_reglog,
+    register_writes_from_player,
     write_reglog,
 )
 
@@ -76,23 +76,6 @@ def iter_register_writes(
     """
     if write_spacing * constants.SID_REGISTERS >= cycles_per_frame:
         raise JCHError("write_spacing too large for one frame")
-    player = make_player(song)
-    # init baseline burst at clock 0 (the post-init SID register file).
-    for offset, val in enumerate(player.regs):
-        yield RegWrite(offset * write_spacing, offset, val)
-
-    # play calls start one frame later (start_frame=1), so the init->play gap
-    # exceeds one frame and the oracle framing anchors frame 0 to the first
-    # play call.  The player already yields 0..24 register offsets, so
-    # frame_writes runs with sid_reg_base=0.
-    def _play_frames():
-        for _ in range(max_frames):
-            yield player.play_frame()
-
-    yield from frame_writes(
-        _play_frames(),
-        cycles_per_frame=cycles_per_frame,
-        write_spacing=write_spacing,
-        start_frame=1,
-        sid_reg_base=0,
+    yield from register_writes_from_player(
+        make_player(song), max_frames, cycles_per_frame, write_spacing
     )
