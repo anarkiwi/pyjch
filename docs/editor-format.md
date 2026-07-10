@@ -26,6 +26,32 @@ this doc cites (with `.d64` = read from the release disk); **[G]** a residual ga
   (optional, occasionally lossy); "Syndrom's JCH-depacker" reverses it back to
   editor format. Export targets the *unpacked* editor `.prg`.
 
+## Packer transform (derived from a tune pair) [V, .d64 + HVSC]
+
+Diffed the **editor form** of Dane's *Fairchild* (`25/FAIRCHILD`, `$0F00`, from
+the release `.d64`) against its **packed HVSC release**
+(`MUSICIANS/M/Mitch_and_Dane/Dane/Fairchild.sid`, `$1000`). Result: the packer
+**does not re-encode musical data** — all 3 order lists, every instrument, the
+wave/pitch/pulse/super tables, and 89/104 sequences are **byte-identical** in both
+forms (the 15 differing sequences are the longer ones the released tune developed
+further; a re-encoding packer would yield *zero* multi-byte verbatim matches). The
+transform is purely structural:
+
+1. **relocate** `$0F00` → `$1000` and **drop the `$0F00` header page** (the `$0FA0`
+   pointer array and `$0FEE` magic go away);
+2. **repack** the page-aligned tables to tight addresses (e.g. wave `$1900`→`$18EA`,
+   instruments `$1D00`→`$19D6`);
+3. **inline** each table base into the player code as an instruction operand (which
+   is why pyjch rediscovers them by idiom), and **rebuild** the sequence lo/hi
+   pointer tables for the new addresses; the pitch table stays at its fixed engine
+   address.
+
+**Consequence for export (packed → editor): copy the recovered sequence / order /
+instrument / wave / pulse / filter bytes VERBATIM** into the editor's page-aligned
+layout and rebuild the `$0FA0` array + seq pointer tables + `$0FEE` magic. No
+sequence re-encoding and no transpose-baseline guess are needed — the order pairs
+already carry their transpose byte (`$80` = neutral in the NP25 sample), copied as-is.
+
 ## Header pointer table `$0FA0` [V, NP20/21]
 
 The editor keeps every table's base in a **contiguous 16-bit-LE pointer array
@@ -97,17 +123,13 @@ entry.transpose = 0x20 + transpose     // editor zero-transpose baseline $20
 if transpose == 0xFF: break            // end of list
 ```
 
-This is **not** the packed-runtime order stream pyjch recovers (a variable
-stream: `<$80` pattern index, `$80+` inline transpose prefix, `$FE` stop / `$FF`
-loop). The editor form pairs every step with an explicit transpose byte; the
-JCH-Packer collapses that into the compact runtime stream. **Exporting to the
-editor therefore re-encodes** each recovered `OrderEntry(pattern, transpose)` as
-`(0x20 + transpose, pattern)` and appends an `$FF`-transpose terminator.
-
-Do **not** apply CheeseCutter's `$A0`-centred signed-transpose convention here —
-that is a different, JCH-lineage driver. **[G]** the exact packed→editor
-transpose mapping and loop-vs-stop restart semantics beyond `$FF` are still
-unconfirmed for NP22-25.
+The tune-pair diff (above) shows the packer copies the order bytes **verbatim**:
+in NP25 *Fairchild* the order pairs are `(80 08)(80 09)…` with `$80` the neutral
+transpose baseline (SF2's `0x20 + transpose` is the 20.g4 convention; NP25 uses
+`$80`). So **export copies the recovered order bytes as-is** — each pair already
+carries its transpose byte and the list ends on an `$FF` transpose byte; no
+`0x20`/`0x80` baseline needs to be synthesised. Do **not** apply CheeseCutter's
+`$A0`-centred signed-transpose convention (a different, JCH-lineage driver).
 
 ## Sequence (pattern) event encoding [V]
 
@@ -322,23 +344,28 @@ for release) and **Syndrom's JCH-depacker** (packed → editor format). No
 
 ## Open gaps to close from the release files
 
-Three sources now agree — SF2 `converter_jch.cpp`, CheeseCutter 0.5.1 (`vsong.d`
-+ `21.g5_Final.txt`), **and the NP22-25 songs read directly out of the release
-`.d64`** (`22/CYCLE2`, `23/EOD8`, `24/ANDRO9`, `25/FAIRCHILD`, all load `$0F00`).
-Fixed and verified: the `$0FA0` pointer array (incl. `[$0C]` pitch, `[$0F]` wave
-col-2), the `NN.rX` version strings, the 8-byte / 32-record instrument table, the
-wave/pulse/filter encodings, the super-command list, the pitch table, and the
-order/sequence encodings. What remains genuinely open:
+Four sources now agree — SF2 `converter_jch.cpp`, CheeseCutter 0.5.1 (`vsong.d` +
+`21.g5_Final.txt`), the NP22-25 songs read out of the release `.d64`, **and a
+packed↔editor tune-pair diff** (editor `25/FAIRCHILD` vs packed HVSC
+`Dane/Fairchild.sid`). Fixed and verified: the `$0FA0` pointer array (incl.
+`[$0C]` pitch, `[$0F]` wave col-2), the `NN.rX` version strings, the 8-byte /
+32-record instrument table, the wave/pulse/filter encodings, the super-command
+list, the pitch table, the order/sequence encodings, **and the packer transform
+(verbatim content; relocation + repack + pointer rebuild only)**. What remains
+genuinely open:
 
 1. Any **NP22-25 opcode/field deltas** the manual (`NP22-25 docs.doc`) adds over
-   NP21 — the four disk tunes exercise the shared layout but not necessarily every
+   NP21 — the disk tunes exercise the shared layout but not necessarily every
    command; and the per-index meaning of the player-code pointers `[$00,$01,
    $04..$0B]` (engine internals, not needed for export).
-2. The precise **packed→editor** transform the closed-source JCH-Packer applies
-   (pyjch recovers the packed runtime form; the editor form is documented above).
 
-Tools used: a ~50-line Python D64 reader + `$0FA0`-array parser (no disassembler
-needed to read the tables); py65's disassembler suffices for any code tracing.
+The packed→editor transform is **resolved**: export copies the recovered
+sequence/order/table bytes verbatim into the page-aligned editor layout and
+rebuilds the `$0FA0` array + seq pointer tables + `$0FEE` magic (see *Packer
+transform* above).
+
+Tools used: a ~50-line Python D64 reader + `$0FA0`-array parser and a byte-diff of
+the tune pair (no disassembler needed).
 
 ## Sources
 
