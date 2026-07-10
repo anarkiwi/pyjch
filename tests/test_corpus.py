@@ -248,7 +248,7 @@ FAMILY_COVERAGE = {
     "V13": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V14": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V15": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
-    "V17": {"note": True, "ctrl": True, "pitch": False, "gate": False, "export": False},
+    "V17": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V18": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
     "V20": {"note": True, "ctrl": True, "pitch": True, "gate": True, "export": True},
 }

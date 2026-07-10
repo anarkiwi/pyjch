@@ -214,6 +214,34 @@ def _find_pwprog(image: bytes) -> Optional[int]:
     return None
 
 
+def _find_pitch_lookup(image: bytes) -> Optional[int]:
+    """V17 interleaved pitch read ``TAY ; LDA base,Y ; STA ; LDA base+1,Y``.
+
+    V17 lacks V20's ``LDA pitch+1,Y ; ADC #$00`` high-byte-carry idiom; it reads
+    the 16-bit pitch table's high byte directly from ``base+1`` after ``TAY``
+    (the freshly computed note*2+transpose index).  Returns the lo-column base.
+    """
+    hit = image.find(b"\xa8\xb9", 0)  # TAY ; LDA base,Y
+    while hit >= 0:
+        base = _w16(image, hit + 2)
+        nxt = b"\xb9" + bytes([(base + 1) & 0xFF, ((base + 1) >> 8) & 0xFF])
+        for gap in (6, 7):  # a 2- or 3-byte store between the two column reads
+            if image[hit + gap : hit + gap + 3] == nxt:
+                return base
+        hit = image.find(b"\xa8\xb9", hit + 1)
+    return None
+
+
+def _pitch_coherent(image: bytes, load: int, base: int) -> bool:
+    """A note->freq table is 16-bit-LE, positive, and monotonic non-decreasing."""
+    off = base - load
+    span = min(96, (len(image) - off) // 2)
+    if span < 64:
+        return False
+    vals = [image[off + 2 * i] | (image[off + 2 * i + 1] << 8) for i in range(span)]
+    return vals[0] > 0 and all(vals[i] <= vals[i + 1] for i in range(span - 1))
+
+
 @dataclass
 class NewPlayerModel:
     """Recovered song model of a JCH NewPlayer wavetable-family tune.
@@ -372,6 +400,14 @@ def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
     pitch_hi = _find_absy(image, _ADC_00)
     if pitch_hi is not None and load < pitch_hi < end:
         bases["pitch_table"] = pitch_hi - 1
+    else:  # V17: interleaved read, no ADC-carry high byte
+        pitch = _find_pitch_lookup(image)
+        if (
+            pitch is not None
+            and load <= pitch < end
+            and _pitch_coherent(image, load, pitch)
+        ):
+            bases["pitch_table"] = pitch
     for key, addr in (
         ("cmdparam", _find_cmdparam(image)),
         ("filterprog", _find_filterprog(image)),

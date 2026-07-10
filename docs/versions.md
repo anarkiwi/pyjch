@@ -63,7 +63,9 @@ the same discovery idioms resolve to in-range, coherent tables:
 * pattern-pointer low/high via `LDA tbl,Y ; STA $FB` / `STA $FC`,
 * instrument records via `LDA inst,Y ; LDY $1740,X ; STA $D405,Y`,
 * (optionally) wavetable note column via `LDA col,Y ; CMP #$7E` and the pitch
-  table via `LDA pitch+1,Y ; ADC #$00`.
+  table via `LDA pitch+1,Y ; ADC #$00` (V17 instead reads the 16-bit table
+  interleaved without the carry -- `TAY ; LDA base,Y ; STA ; LDA base+1,Y` --
+  recovered by a distinct idiom gated on an ascending note table).
 
 ### Family wavetable-table lift (both wave columns + extra tables)
 
@@ -108,7 +110,7 @@ Per-version representative outcome (`tests/test_corpus.py::FAMILY_COVERAGE`):
 | ------- | :-------: | :-------: | :---: | :-----: | :--: | :---------: |
 | V6/V8/V9/V10/V11/V13/V18 | Y | Y | Y | V18 only | Y | Y |
 | V14/V15 | Y | Y | Y | – | Y | Y (96-row sequence split) |
-| V17 | Y | Y | – | – | – | pitch idiom (`ADC #$00`) absent |
+| V17 | Y | Y | Y | – | Y | Y (interleaved pitch idiom, no `ADC #$00`) |
 | V1/V2 | – | – | Y | – | – | CTRL from per-instrument field group, no pointer-indexed wave column |
 | V20 (code build) | Y | Y | Y | Y | Y | Y |
 
