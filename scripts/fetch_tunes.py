@@ -27,19 +27,16 @@ import argparse
 import importlib
 import os
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+from pysidtracker.testing import DEFAULT_MIRROR, fetch_tune
 
 REPO = Path(__file__).resolve().parent.parent
 CACHE = Path(os.environ.get("JCH_TUNECACHE", str(REPO / "tests" / ".tunecache")))
 
 # Public HVSC mirror.  Override with ``$HVSC_MIRROR``.  The relative HVSC
 # path is appended verbatim.
-MIRROR = os.environ.get("HVSC_MIRROR", "https://hvsc.brona.dk/HVSC/C64Music").rstrip(
-    "/"
-)
+MIRROR = os.environ.get("HVSC_MIRROR", DEFAULT_MIRROR).rstrip("/")
 
 # id -> HVSC relative path.  Both tunes are the JCH NewPlayer byte-exact
 # validation references (load $1000, init->$1060, play->$10E8).
@@ -49,40 +46,16 @@ TUNES = {
 }
 
 
-def _is_sid(data: bytes) -> bool:
-    return data[:4] in (b"PSID", b"RSID")
-
-
 def fetch(relpath: str, *, force: bool = False, retries: int = 4) -> Path:
     """Fetch ``relpath`` from the HVSC mirror into the cache; return its path.
 
-    Retries transient network failures with exponential backoff so a single
-    hiccup does not fail the fetch; a tune is only reported unreachable after
-    ``retries`` attempts.
+    Thin wrapper over :func:`pysidtracker.testing.fetch_tune`: validates the
+    PSID/RSID magic, retries transient network failures with exponential
+    backoff, writes the cache atomically, and returns the cached path.
     """
-    relpath = relpath.lstrip("/")
-    dest = CACHE / relpath
-    if dest.exists() and not force:
-        return dest
-    url = f"{MIRROR}/{relpath}"
-    req = urllib.request.Request(url, headers={"User-Agent": "pyjch/fetch_tunes"})
-    last_exc: Exception | None = None
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(  # nosec B310 (https mirror)
-                req, timeout=60
-            ) as resp:
-                data = resp.read()
-            if not _is_sid(data):
-                raise RuntimeError(f"{url}: not a SID file (magic {data[:4]!r})")
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
-            return dest
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            last_exc = exc
-            if attempt < retries - 1:
-                time.sleep(2**attempt)
-    raise RuntimeError(f"{url}: unreachable after {retries} attempts ({last_exc})")
+    return fetch_tune(
+        relpath, cache_dir=CACHE, mirror=MIRROR, retries=retries, force=force
+    )
 
 
 def corpus_relpaths() -> list[str]:
