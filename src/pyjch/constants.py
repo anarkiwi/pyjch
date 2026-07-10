@@ -10,16 +10,20 @@ the player code's 16-bit operands (relocation-safe -- no fixed-address
 assumption).
 """
 
-# SID register map.
-SID_REGISTERS = 25
+# SID register map -- hardware facts shared via ``pysidtracker.registers``.
+from pysidtracker import registers as _registers
+
+SID_BASE = _registers.SID_BASE
+SID_REG_COUNT = _registers.SID_REG_COUNT
+SID_VOICE_OFFSET = _registers.SID_VOICE_OFFSET
+PW_HI_REGS = _registers.PW_HI_REGS
+
+SID_REGISTERS = SID_REG_COUNT  # $D400..$D418 (25 registers)
 VOICES = 3
 VOICE_REG_SIZE = 7
 
 # Per-voice SID base offsets ($D400 + offset).
-SID_OFFSET = (0, 7, 14)
-
-# Pulse-width high registers carry only their low nibble (12-bit pulse).
-PW_HI_REGS = (0x03, 0x0A, 0x11)
+SID_OFFSET = SID_VOICE_OFFSET
 
 # Per-tune immediates and pointer-table bases live in the player code as
 # instruction operands.  The reader locates them by their surrounding
@@ -72,11 +76,11 @@ INIT_PW_HI_V0 = 0x04  # $D403
 INIT_PW_HI_V12 = 0x01  # $D40A / $D411
 INIT_VOLUME = 0x0F  # $D418
 
-# C64 timing.  A PAL frame is 312 rasterlines x 63 cycles.
-PAL_CLOCK_HZ = 985248
-PAL_CYCLES_PER_FRAME = 19656
-NTSC_CLOCK_HZ = 1022727
-NTSC_CYCLES_PER_FRAME = 17095
+# C64 frame timing (documented hardware facts, shared).
+PAL_CLOCK_HZ = _registers.PAL_CLOCK_HZ
+PAL_CYCLES_PER_FRAME = _registers.PAL_CYCLES_PER_FRAME
+NTSC_CLOCK_HZ = _registers.NTSC_CLOCK_HZ
+NTSC_CYCLES_PER_FRAME = _registers.NTSC_CYCLES_PER_FRAME
 
 # Standard JCH NewPlayer entry points (PSID header normally matches).
 DEFAULT_LOAD = 0x1000

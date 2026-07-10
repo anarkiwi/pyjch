@@ -7,10 +7,13 @@ there is no network).  ``oracle_grid`` produces the ground-truth per-frame
 SID register grid -- live from the ``preframr-sidtrace`` binary
 (``$SIDTRACE_BIN``) when available, else from the committed frozen grid --
 mirroring deplayroutine's env-gated validator.
+
+The grid framer / sidwr reader / grid aligner are the shared
+``pysidtracker.oracle`` surfaces (``grid_from_writes`` / ``read_sidwr`` /
+``aligned_match``), re-exported here for the tune-dependent tests.
 """
 
 import os
-import struct
 import subprocess
 import sys
 import tempfile
@@ -18,36 +21,18 @@ from pathlib import Path
 
 import pytest
 
+from pysidtracker.oracle import grid_from_writes, read_sidwr
+from pysidtracker.testing import resolve_tune
+
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
 import fetch_tunes  # noqa: E402  (after sys.path tweak)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-NREG = 25
-PW_HI_REGS = {0x03, 0x0A, 0x11}
-_REC = struct.Struct("<qHBB")
-_PAL_CPF = 19656
 
 # id -> committed frozen grid file (and the canonical tune id).
 TUNE_IDS = ("flexible", "simple")
-
-
-def _try_resolve(tune_id):
-    """Path to a usable tune, or None if it cannot be obtained."""
-    rel = fetch_tunes.TUNES[tune_id]
-    local = os.environ.get("JCH_LOCAL_HVSC")
-    if local:
-        cand = Path(local) / rel
-        if cand.exists():
-            return cand
-    dest = fetch_tunes.CACHE / rel
-    if dest.exists():
-        return dest
-    try:
-        return fetch_tunes.fetch(rel)
-    except Exception:  # pylint: disable=broad-except  # offline -> skip
-        return None
 
 
 @pytest.fixture(params=TUNE_IDS)
@@ -59,47 +44,14 @@ def tune_id(request):
 @pytest.fixture
 def tune_path(tune_id):
     """Path to the tune for ``tune_id``, skipping if unavailable."""
-    path = _try_resolve(tune_id)
+    path = resolve_tune(
+        fetch_tunes.TUNES[tune_id],
+        cache_dir=fetch_tunes.CACHE,
+        local_env="JCH_LOCAL_HVSC",
+    )
     if path is None:
         pytest.skip(f"tune {tune_id} unavailable (offline, not cached)")
     return path
-
-
-def _read_sidwr(path):
-    blob = Path(path).read_bytes()
-    out = []
-    for off in range(0, len(blob) - _REC.size + 1, _REC.size):
-        cyc, _addr, reg, val = _REC.unpack_from(blob, off)
-        if reg < NREG:
-            out.append((cyc, reg, val))
-    return out
-
-
-def _first_play_cycle(writes, gap=10000):
-    cyc = [w[0] for w in writes]
-    for prev, cur in zip(cyc, cyc[1:]):
-        if cur - prev > gap:
-            return cur
-    return cyc[0]
-
-
-def _grid_from_writes(writes, cpf=_PAL_CPF):
-    t0 = _first_play_cycle(writes)
-    rows = []
-    cur = [0] * NREG
-    idx = 0
-    while idx < len(writes) and writes[idx][0] < t0:
-        _c, reg, val = writes[idx]
-        cur[reg] = (val & 0x0F) if reg in PW_HI_REGS else val
-        idx += 1
-    nframes = (writes[-1][0] - t0 + cpf // 2) // cpf + 1
-    for frame in range(nframes):
-        while idx < len(writes) and (writes[idx][0] - t0 + cpf // 2) // cpf == frame:
-            _c, reg, val = writes[idx]
-            cur[reg] = (val & 0x0F) if reg in PW_HI_REGS else val
-            idx += 1
-        rows.append(cur[:])
-    return rows
 
 
 def _live_grid(tune_file, nframes=400):
@@ -114,7 +66,7 @@ def _live_grid(tune_file, nframes=400):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return _grid_from_writes(_read_sidwr(prefix + ".sidwr.bin"))
+        return grid_from_writes(read_sidwr(prefix + ".sidwr.bin"))
 
 
 def _frozen_grid(tune_id):
@@ -128,49 +80,6 @@ def _frozen_grid(tune_id):
             continue
         rows.append([int(tok, 16) for tok in line.split()])
     return rows
-
-
-def grid_from_writes(writes):
-    """Frame an in-memory ``[(clock, reg, val), ...]`` write-stream.
-
-    A pure-stdlib copy of deplayroutine's ``oracle.grid_from_writes``: it
-    anchors frame 0 to the first play call (the first write after a
-    ``> 10000``-cycle gap), uses the leading init writes as frame 0's
-    baseline, forward-fills, and nibble-masks the PW-high registers.  This
-    is the surface deplayroutine's ``cross_check_oracle_grid`` validates
-    pyjch through.
-    """
-    if not writes:
-        return []
-    return _grid_from_writes([(c, r, v) for c, r, v in writes])
-
-
-def aligned_match(oracle, rendered, max_lead=4):
-    """deplayroutine's ``validate``: align over <= max_lead leading silent
-    frames; return (ok, lead, divergence)."""
-    if not rendered:
-        return False, 0, (0, 0, -1, -1)
-    baseline = rendered[0]
-    best = None
-    for lead in range(max_lead + 1):
-        if lead and (lead > len(rendered) or rendered[lead - 1] != baseline):
-            break
-        aligned = rendered[lead : lead + len(oracle)]
-        if len(aligned) < len(oracle):
-            best = best or ("short", lead)
-            continue
-        div = None
-        for frame in range(len(oracle)):
-            for reg in range(NREG):
-                if oracle[frame][reg] != aligned[frame][reg]:
-                    div = (frame, reg, oracle[frame][reg], aligned[frame][reg])
-                    break
-            if div:
-                break
-        if div is None:
-            return True, lead, None
-        best = best or div
-    return False, 0, best
 
 
 @pytest.fixture

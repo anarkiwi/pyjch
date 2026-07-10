@@ -3,6 +3,7 @@
 import io
 
 import pytest
+from pysidtracker import SidParseError as SharedSidParseError
 
 from pyjch import constants, reader, reglog
 from pyjch.errors import JCHError
@@ -66,12 +67,12 @@ def test_read_reglog_skips_comments_and_blanks():
 
 
 def test_read_reglog_bad_line():
-    with pytest.raises(JCHError):
+    with pytest.raises(SharedSidParseError):
         reglog.read_reglog(io.StringIO("1 2\n"))
 
 
 def test_read_reglog_non_integer():
-    with pytest.raises(JCHError):
+    with pytest.raises(SharedSidParseError):
         reglog.read_reglog(io.StringIO("a b c\n"))
 
 
@@ -81,10 +82,12 @@ def test_read_reglog_rejects_unknown_source():
 
 
 def test_reglog_grid_matches_oracle(tune_id, tune_path, oracle_grid):
-    """The reglog write-stream, framed by deplayroutine's grid_from_writes,
+    """The reglog write-stream, framed by pysidtracker's grid_from_writes,
     matches the committed oracle grid byte-exact -- the surface
     deplayroutine's cross_check_oracle_grid validates pyjch through."""
-    from tests.conftest import aligned_match, grid_from_writes
+    from pysidtracker.oracle import aligned_match
+
+    from tests.conftest import grid_from_writes
 
     oracle, source = oracle_grid
     song = reader.read(tune_path)
@@ -93,9 +96,6 @@ def test_reglog_grid_matches_oracle(tune_id, tune_path, oracle_grid):
         for w in reglog.iter_register_writes(song, max_frames=len(oracle) + 6)
     ]
     rendered = grid_from_writes(writes)
-    ok, lead, div = aligned_match(oracle, rendered)
-    assert ok, (
-        f"{tune_id}: reglog grid not byte-exact (oracle {source}); "
-        f"divergence {div} at lead 0"
-    )
-    assert lead <= 4
+    assert aligned_match(
+        oracle, rendered
+    ), f"{tune_id}: reglog grid not byte-exact (oracle {source})"

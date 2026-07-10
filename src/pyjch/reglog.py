@@ -8,15 +8,30 @@ they load directly into pandas or any line-based tooling.  This is the
 mandatory validator surface deplayroutine's harness imports.
 """
 
-import io
-from pathlib import Path
-from typing import IO, Iterable, Iterator, NamedTuple
+from typing import Iterator
+
+from pysidtracker.reglog import (
+    DEFAULT_WRITE_SPACING,
+    RegWrite,
+    frame_writes,
+    read_reglog,
+    write_reglog,
+)
 
 from pyjch import constants, v20player
 from pyjch.errors import JCHError, SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import Player
+
+__all__ = [
+    "DEFAULT_WRITE_SPACING",
+    "RegWrite",
+    "iter_register_writes",
+    "make_player",
+    "read_reglog",
+    "write_reglog",
+]
 
 
 def make_player(song):
@@ -36,21 +51,6 @@ def make_player(song):
             )
         return v20player.V20Player(song)
     return Player(song)
-
-
-# Cycles between consecutive writes within one frame, approximating the
-# store instructions of the 6502 playroutine.
-DEFAULT_WRITE_SPACING = 16
-
-REGLOG_HEADER = "# pyjch register log: clock reg val"
-
-
-class RegWrite(NamedTuple):
-    """One SID register write at an absolute CPU clock (in cycles)."""
-
-    clock: int
-    reg: int
-    val: int
 
 
 def iter_register_writes(
@@ -80,49 +80,19 @@ def iter_register_writes(
     # init baseline burst at clock 0 (the post-init SID register file).
     for offset, val in enumerate(player.regs):
         yield RegWrite(offset * write_spacing, offset, val)
-    # play calls start one frame later, so the init->play gap exceeds one
-    # frame and the oracle framing anchors frame 0 to the first play call.
-    for frame in range(max_frames):
-        writes = player.play_frame()
-        clock = (frame + 1) * cycles_per_frame
-        for offset, (reg, val) in enumerate(writes):
-            yield RegWrite(clock + offset * write_spacing, reg, val)
 
+    # play calls start one frame later (start_frame=1), so the init->play gap
+    # exceeds one frame and the oracle framing anchors frame 0 to the first
+    # play call.  The player already yields 0..24 register offsets, so
+    # frame_writes runs with sid_reg_base=0.
+    def _play_frames():
+        for _ in range(max_frames):
+            yield player.play_frame()
 
-def write_reglog(writes: Iterable[RegWrite], dst, header: bool = True) -> None:
-    """Write a register log to a path or text file-like object."""
-
-    def _dump(out: IO[str]) -> None:
-        if header:
-            print(REGLOG_HEADER, file=out)
-        for write in writes:
-            print(f"{write.clock} {write.reg} {write.val}", file=out)
-
-    if isinstance(dst, (str, Path)):
-        with open(dst, "w", encoding="utf-8") as out:
-            _dump(out)
-        return
-    _dump(dst)
-
-
-def read_reglog(src) -> list[RegWrite]:
-    """Read a register log from a path or text file-like object."""
-    if isinstance(src, (str, Path)):
-        text = Path(src).read_text(encoding="utf-8")
-    elif isinstance(src, io.IOBase) or hasattr(src, "read"):
-        text = src.read()
-    else:
-        raise TypeError(f"cannot read a register log from {type(src).__name__}")
-    writes = []
-    for num, line in enumerate(text.splitlines(), start=1):
-        line = line.split("#", 1)[0].strip()
-        if not line:
-            continue
-        fields = line.split()
-        if len(fields) != 3:
-            raise JCHError(f"bad register log line {num}: {line!r}")
-        try:
-            writes.append(RegWrite(*(int(field) for field in fields)))
-        except ValueError as exc:
-            raise JCHError(f"bad register log line {num}: {line!r}") from exc
-    return writes
+    yield from frame_writes(
+        _play_frames(),
+        cycles_per_frame=cycles_per_frame,
+        write_spacing=write_spacing,
+        start_frame=1,
+        sid_reg_base=0,
+    )
