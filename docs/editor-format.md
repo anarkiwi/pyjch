@@ -218,6 +218,14 @@ From `21.g5_Final.txt`; wave = two 256-byte columns, pulse/filter = 4 bytes/entr
   break-speed table** (see below); otherwise `xx` = filter value (`$FF` = keep);
   `yy` = count; `zz` = duration; `qq` = next entry (absolute index).
 
+This `{value, step, dwell, next-absolute-index}` chain is the **NP20-25** pulse/
+filter model. The **classic family (V1/V2/V6-V18)** uses an incompatible
+**limit-based ping-pong** instead (`{packed up/down limits, step, flags+dwell,
+value}`, sequential `Y+=4` cursor, auto-reflecting at the packed limits); its
+limits column is load-bearing and has no representation here, so classic-family
+pulse/filter bytes are **not** editor-copyable (see `versions.md`). Only V20-frame
+builds carry this editor format directly.
+
 ## Speed / break-speed table [V]
 
 Speeds `$00`/`$01` are "break speeds": the player looks the real speed up in the

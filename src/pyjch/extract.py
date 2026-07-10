@@ -365,6 +365,15 @@ def _extract_family(model) -> Tune:  # pylint: disable=too-many-locals
         note_end = _next_base(all_bases, model.wave_note_col, end)
         wavetable = WaveTable(_wave_slice(model, model.wave_note_col, note_end), [])
         notes.append("wave ctrl column not recovered (note column only)")
+    elif model.wave_stream is not None:
+        notes.append(
+            "wavetable is the V1/V2 single interleaved (ctrl,note) stream at "
+            f"${model.wave_stream:04x}; its $FF-restart loop target is the "
+            "instrument's own wave-start field, so the stream de-interleaves to "
+            "the editor's two columns -- but a faithful editor export is still "
+            "blocked by the ~16-byte instrument records and the embedded "
+            "limit-based PW/filter, which have no editor representation"
+        )
     else:
         notes.append("wavetable not recovered")
     pitch: List[int] = []
@@ -389,9 +398,12 @@ def _extract_family(model) -> Tune:  # pylint: disable=too-many-locals
         notes.append("$C0 pattern commands unclassified (no command table)")
     if model.filterprog is None or model.pwprog is None:
         notes.append(
-            "pulse/filter program not recovered (classic-family sweep uses a "
-            "sequential Y+=4 cursor with no next-index column and a different "
-            "column order than the NP20-25 editor pulse/filter format)"
+            "pulse/filter program not recovered: the classic-family (V6-V18) sweep "
+            "is a limit-based ping-pong (4-byte entry = packed up/down limits, "
+            "step, flags+dwell, value; sequential Y+=4 cursor) that auto-reflects "
+            "at the packed hi/lo limits -- the NP20-25 editor's next-index-chained "
+            "(value, step, dwell, next) format has no limits column, so the sweep "
+            "is not faithfully representable (not a mere column reorder)"
         )
     notes.append("hard-restart not recovered")
     bases = {

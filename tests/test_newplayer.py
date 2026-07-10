@@ -210,3 +210,48 @@ def test_pitch_lookup_helpers_negative():
     """The lookup finder returns None with no frame; coherence rejects a short span."""
     assert newplayer._find_pitch_lookup(bytes(0x40)) is None
     assert not newplayer._pitch_coherent(bytes(0x20), LOAD, LOAD + 0x10)
+
+
+STREAM = 0x11E0  # V1/V2 interleaved wave stream base
+CURSOR = 0x16FA  # per-voice wave cursor cell (a runtime cell, off-image)
+RESTART = 0x16FB  # per-voice restart-target cell (off-image)
+
+
+def _interleaved_wave_image():
+    """Base image + the V1/V2 interleaved-wave stream-read and restart idioms."""
+    buf = bytearray(_base_image())
+    # Stream read: LDY cursor,X ; LDA STREAM,Y ; CMP #$FF.
+    _put(
+        buf,
+        0x1050,
+        bytes([0xBC, CURSOR & 0xFF, CURSOR >> 8, 0xB9, STREAM & 0xFF, STREAM >> 8])
+        + b"\xc9\xff",
+    )
+    # Restart handler: CMP #$FF ; BNE +9 ; LDA restart,X ; STA cursor,X ; JMP.
+    _put(
+        buf,
+        0x1060,
+        bytes([0xC9, 0xFF, 0xD0, 0x09, 0xBD, RESTART & 0xFF, RESTART >> 8, 0x9D])
+        + bytes([CURSOR & 0xFF, CURSOR >> 8, 0x4C, 0x00, 0x10]),
+    )
+    return bytes(buf)
+
+
+def test_interleaved_wave_stream_discovered():
+    """The V1/V2 idiom recovers the interleaved wave-stream base (no two-column)."""
+    bases = discover(LOAD, _interleaved_wave_image(), INIT, PLAY)
+    assert bases["wave_stream"] == STREAM
+    assert "wave_note_col" not in bases  # single stream, not two parallel columns
+
+
+def test_interleaved_wave_absent_in_base_image():
+    """A plain family image has no interleaved-wave stream."""
+    assert newplayer._find_interleaved_wave(_base_image()) is None
+    assert "wave_stream" not in discover(LOAD, _base_image(), INIT, PLAY)
+
+
+def test_interleaved_wave_mismatched_cursor_rejected():
+    """The restart handler must reference the same cursor cell as the stream read."""
+    buf = bytearray(_interleaved_wave_image())
+    _put(buf, 0x1068, bytes([0x00, 0x17]))  # STA cursor,X -> a different cell
+    assert newplayer._find_interleaved_wave(bytes(buf)) is None

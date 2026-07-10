@@ -10,7 +10,13 @@ from pyjch.extract import extract
 from pyjch.songmodel import CommandKind, NoteKind, Tune
 
 from tests import _synth_v20 as synth
-from tests.test_newplayer import INIT, LOAD, PLAY, _base_image
+from tests.test_newplayer import (
+    INIT,
+    LOAD,
+    PLAY,
+    _base_image,
+    _interleaved_wave_image,
+)
 
 
 def _tune() -> Tune:
@@ -35,6 +41,23 @@ def test_family_tier_decodes_subset_and_notes_absences():
     assert not tune.pw_program and not tune.filter_program and not tune.commands
     assert tune.wavetable is None
     assert any("not recovered" in note for note in tune.provenance.notes)
+
+
+def test_interleaved_wave_family_notes_but_stays_export_blocked():
+    """V1/V2 interleaved-wave: honest note, no fabricated two-column wavetable.
+
+    The stream's $FF-restart target is the instrument's own wave-start (a proven
+    derivation), so the model records the interleaved stream -- but it is not
+    emitted as an editor two-column wavetable, so a faithful export stays blocked
+    on the ~16-byte instrument records and embedded limit-based PW/filter.
+    """
+    model = newplayer.recover(
+        LOAD, INIT, PLAY, "n", "a", "r", _interleaved_wave_image(), b"", "V1", 1
+    )
+    assert model.wave_stream is not None
+    tune = extract(model)
+    assert tune.wavetable is None  # not fabricated into editor columns
+    assert any("interleaved" in note for note in tune.provenance.notes)
 
 
 def test_provenance_is_v20():
