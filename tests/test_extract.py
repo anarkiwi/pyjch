@@ -57,6 +57,21 @@ def test_subtunes_and_order_lists():
     entry = sub.order_lists[1].entries[0]
     assert entry.pattern == 2 and entry.transpose == 0x85
     assert [e.pattern for e in sub.order_lists[2].entries] == [3]
+    # raw order bytes captured verbatim, incl. the $FF terminator.
+    assert sub.order_lists[0].raw == [0x00, 0x01, 0x04, 0xFF]
+    assert sub.order_lists[1].raw == [0x85, 0x02, 0xFF]
+    assert sub.order_lists[2].raw == [0x03, 0xFF]
+
+
+def test_pattern_raw_captured_verbatim():
+    tune = _tune()
+    assert tune.pattern_raw == [
+        [0xC1, 0x0C, 0x7F],
+        [0xC2, 0x10, 0x7F],
+        [0xA1, 0x14, 0x00, 0x7F],
+        [0x7E, 0x7F],
+        [0x83, 0xC3, 0xC4, 0xC5, 0xC6, 0x14, 0x7F],
+    ]
 
 
 def test_patterns_decode_every_event_kind():
