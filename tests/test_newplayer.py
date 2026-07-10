@@ -170,3 +170,43 @@ def test_classify_version_v20_prologue():
 
 def test_classify_version_play_out_of_range():
     assert classify_version(LOAD, _base_image(), 0x9999) == "JCH_NewPlayer"
+
+
+PITCH = 0x11C0  # ascending 16-bit pitch table for the V17-idiom tests
+
+
+def _v17_pitch_image():
+    """Base image + a V17 interleaved pitch read and an ascending pitch table."""
+    buf = bytearray(_base_image())
+    # TAY ; LDA PITCH,Y ; STA freqlo,X ; LDA PITCH+1,Y (no ADC #$00 anywhere).
+    _put(
+        buf,
+        0x1030,
+        bytes(
+            [0xA8, 0xB9, PITCH & 0xFF, PITCH >> 8, 0x9D, 0x0C, 0x10, 0xB9]
+            + [(PITCH + 1) & 0xFF, PITCH >> 8, 0x9D, 0x0F, 0x10]
+        ),
+    )
+    for i in range(96):  # ascending 16-bit LE table
+        _put(buf, PITCH + 2 * i, bytes([(0x0100 + i) & 0xFF, (0x0100 + i) >> 8]))
+    return bytes(buf)
+
+
+def test_v17_interleaved_pitch_idiom_recovered():
+    """The V17 idiom recovers the pitch base when the ADC #$00 idiom is absent."""
+    bases = discover(LOAD, _v17_pitch_image(), INIT, PLAY)
+    assert bases["pitch_table"] == PITCH
+
+
+def test_v17_pitch_idiom_rejects_non_ascending_table():
+    """A matching read frame over a non-monotonic table is not accepted as pitch."""
+    buf = bytearray(_v17_pitch_image())
+    _put(buf, PITCH, bytes([0xFF, 0xFF, 0x00, 0x00]))  # breaks monotonicity at entry 0
+    bases = discover(LOAD, bytes(buf), INIT, PLAY)
+    assert "pitch_table" not in bases
+
+
+def test_pitch_lookup_helpers_negative():
+    """The lookup finder returns None with no frame; coherence rejects a short span."""
+    assert newplayer._find_pitch_lookup(bytes(0x40)) is None
+    assert not newplayer._pitch_coherent(bytes(0x20), LOAD, LOAD + 0x10)

@@ -45,10 +45,13 @@ from pyjch.songmodel import (
     WaveTable,
 )
 
-_MAX_WALK = 512  # order-list / pattern length cap for the static walk
+_MAX_WALK = 512  # order-list length cap for the static walk
+_MAX_PATTERN = 1024  # pattern length cap (longest real sequence observed: 820 B)
 
 
-def _raw_stream(model, addr: Optional[int], terminators) -> List[int]:
+def _raw_stream(
+    model, addr: Optional[int], terminators, limit: int = _MAX_WALK
+) -> List[int]:
     """Source bytes from ``addr`` through (and including) the first terminator.
 
     A verbatim slice for faithful re-emit; needs only the base + terminators, so
@@ -58,7 +61,7 @@ def _raw_stream(model, addr: Optional[int], terminators) -> List[int]:
     if addr is None:
         return []
     out: List[int] = []
-    for _ in range(_MAX_WALK):
+    for _ in range(limit):
         byte = model._byte(addr)  # pylint: disable=protected-access
         if byte is None:
             break
@@ -142,7 +145,7 @@ def _decode_pattern(model, base: Optional[int], cmdparam: Optional[int]):
     if base is None:
         return events
     addr = base
-    for _ in range(_MAX_WALK):
+    for _ in range(_MAX_PATTERN):
         byte = model._byte(addr)  # pylint: disable=protected-access
         if byte is None or byte == 0x7F:
             break
@@ -229,7 +232,7 @@ def _collect(model, cmdparam: Optional[int]):
         base = model.pattern_ptr(idx)
         events = _decode_pattern(model, base, cmdparam)
         patterns.append(events)
-        pattern_raw.append(_raw_stream(model, base, (0x7F,)))
+        pattern_raw.append(_raw_stream(model, base, (0x7F,), _MAX_PATTERN))
         for event in events:
             cmd = event.command
             if cmd is None:
@@ -385,7 +388,11 @@ def _extract_family(model) -> Tune:  # pylint: disable=too-many-locals
     if model.cmdparam is None:
         notes.append("$C0 pattern commands unclassified (no command table)")
     if model.filterprog is None or model.pwprog is None:
-        notes.append("pulse/filter program not recovered")
+        notes.append(
+            "pulse/filter program not recovered (classic-family sweep uses a "
+            "sequential Y+=4 cursor with no next-index column and a different "
+            "column order than the NP20-25 editor pulse/filter format)"
+        )
     notes.append("hard-restart not recovered")
     bases = {
         "subtune_table": model.subtune_table,

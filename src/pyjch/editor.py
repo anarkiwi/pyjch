@@ -22,11 +22,11 @@ The default empty ``driver`` yields a zero-filled player region: structurally
 valid (correct pointer block / tables), but not runnable without a stock driver.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
 
 from pyjch.errors import SidParseError
-from pyjch.songmodel import Tune
+from pyjch.songmodel import OrderEntry, Tune
 
 _MAX_INSTRUMENTS = 32
 _MAX_SUBTUNES = 31
@@ -118,6 +118,98 @@ def np_profile(version: int) -> EditorProfile:
         raise SidParseError(f"no editor profile for NP version {version}") from exc
 
 
+def _pattern_rows(raw: List[int]) -> int:
+    """Editor rows in a sequence ``raw`` stream (through the ``$7F`` terminator).
+
+    A row is a player fetch unit: zero or more command bytes (``>= $80``)
+    followed by exactly one note byte (``< $80``); ``$7F`` ends the sequence
+    (peeked only right after a note).  The editor's 96-row cap counts these
+    fetch units, not raw bytes.
+    """
+    rows = 0
+    for byte in raw:
+        if byte == 0x7F:
+            break
+        if byte < 0x80:
+            rows += 1
+    return rows
+
+
+def _split_raw(raw: List[int], max_rows: int) -> List[List[int]]:
+    """Split a ``$7F``-terminated sequence into row-aligned ``<= max_rows`` chunks.
+
+    Boundaries fall only after a note byte (a player row boundary), where the
+    player resets the pattern cursor and advances the order pointer -- per-voice
+    state persists, so the split is behaviourally identical.  Each chunk is
+    ``$7F``-terminated; concatenating the chunks minus their injected ``$7F``
+    reproduces the original body exactly.
+    """
+    if not raw or raw[-1] != 0x7F:
+        return [list(raw)]
+    body = raw[:-1]
+    bounds = [k + 1 for k, byte in enumerate(body) if byte < 0x80]
+    if not bounds or bounds[-1] != len(body):
+        bounds.append(len(body))  # trailing partial row (no closing note)
+    chunks: List[List[int]] = []
+    start = 0
+    for group in (bounds[i : i + max_rows] for i in range(0, len(bounds), max_rows)):
+        end = group[-1]
+        chunks.append(list(body[start:end]) + [0x7F])
+        start = end
+    return chunks
+
+
+def _split_long_patterns(tune: Tune, max_rows: int = _MAX_ROWS) -> Tune:
+    """Split any sequence exceeding ``max_rows`` rows into consecutive chunks.
+
+    Rewrites the order lists (byte-level, preserving each transpose prefix -- the
+    player's persistent transpose covers a chunk run) so a voice's order list
+    references the chunk sequences in order.  Returns ``tune`` unchanged when no
+    sequence overflows.
+    """
+    expand: Dict[int, List[int]] = {}
+    patterns = list(tune.patterns)
+    pattern_raw = list(tune.pattern_raw)
+    for index, raw in enumerate(tune.pattern_raw):
+        if _pattern_rows(raw) <= max_rows:
+            continue
+        chunks = _split_raw(raw, max_rows)
+        events = patterns[index]
+        offsets = [0]
+        for chunk in chunks:
+            offsets.append(offsets[-1] + len(chunk) - 1)  # drop injected $7F
+        idxs = [index]
+        pattern_raw[index] = chunks[0]
+        patterns[index] = events[offsets[0] : offsets[1]]
+        for cnum in range(1, len(chunks)):
+            idxs.append(len(pattern_raw))
+            pattern_raw.append(chunks[cnum])
+            patterns.append(events[offsets[cnum] : offsets[cnum + 1]])
+        expand[index] = idxs
+    if not expand:
+        return tune
+    subtunes = [
+        replace(sub, order_lists=[_remap_order(o, expand) for o in sub.order_lists])
+        for sub in tune.subtunes
+    ]
+    return replace(tune, patterns=patterns, pattern_raw=pattern_raw, subtunes=subtunes)
+
+
+def _remap_order(order, expand: Dict[int, List[int]]):
+    """Expand every split pattern reference in an order list to its chunk run."""
+    raw: List[int] = []
+    for byte in order.raw:
+        if byte < 0x80 and byte in expand:
+            raw.extend(expand[byte])  # chunk indices (all < 0x80); transpose persists
+        else:
+            raw.append(byte)
+    entries: List[OrderEntry] = []
+    for entry in order.entries:
+        for pat in expand.get(entry.pattern, [entry.pattern]):
+            entries.append(OrderEntry(pattern=pat, transpose=entry.transpose))
+    return replace(order, raw=raw, entries=entries)
+
+
 def _check_capacity(tune: Tune) -> None:
     if len(tune.instruments) > _MAX_INSTRUMENTS:
         raise SidParseError(f"too many instruments ({len(tune.instruments)} > 32)")
@@ -125,9 +217,10 @@ def _check_capacity(tune: Tune) -> None:
         raise SidParseError(f"too many subtunes ({len(tune.subtunes)} > 31)")
     if len(tune.patterns) > _MAX_PATTERNS:
         raise SidParseError(f"too many patterns ({len(tune.patterns)} > 114)")
-    for index, events in enumerate(tune.patterns):
-        if len(events) > _MAX_ROWS:
-            raise SidParseError(f"pattern {index} too long ({len(events)} > 96 rows)")
+    for index, raw in enumerate(tune.pattern_raw):
+        rows = _pattern_rows(raw)
+        if rows > _MAX_ROWS:
+            raise SidParseError(f"pattern {index} too long ({rows} > 96 rows)")
 
 
 def _require_tables(tune: Tune, profile: EditorProfile) -> None:
@@ -221,13 +314,16 @@ def write_editor_prg(
     """Assemble an editor-native ``.prg`` for ``tune`` at the profile's layout.
 
     Injects the caller-supplied stock ``driver`` prefix (default empty ->
-    zero-filled, non-runnable but structurally valid), copies the recovered
-    sequence / order / table bytes **verbatim** to ``profile``'s canonical
-    bases, writes the ``$0FA0`` pointer block + 5-char version magic + default
-    tempo, and returns the 2-byte-load image.  Raises
+    zero-filled, non-runnable but structurally valid), splits any sequence
+    exceeding the editor's 96-row cap into consecutive row-aligned chunks
+    (rewriting the order lists), copies the recovered sequence / order / table
+    bytes **verbatim** to ``profile``'s canonical bases, writes the ``$0FA0``
+    pointer block + 5-char version magic + default tempo, and returns the
+    2-byte-load image.  Raises
     :class:`~pyjch.errors.SidParseError` on capacity overflow or when the tune
     lacks a table the editor form requires.
     """
+    tune = _split_long_patterns(tune)
     _check_capacity(tune)
     _require_tables(tune, profile)
     mem: Dict[int, int] = {}

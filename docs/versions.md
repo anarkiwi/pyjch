@@ -63,7 +63,9 @@ the same discovery idioms resolve to in-range, coherent tables:
 * pattern-pointer low/high via `LDA tbl,Y ; STA $FB` / `STA $FC`,
 * instrument records via `LDA inst,Y ; LDY $1740,X ; STA $D405,Y`,
 * (optionally) wavetable note column via `LDA col,Y ; CMP #$7E` and the pitch
-  table via `LDA pitch+1,Y ; ADC #$00`.
+  table via `LDA pitch+1,Y ; ADC #$00` (V17 instead reads the 16-bit table
+  interleaved without the carry -- `TAY ; LDA base,Y ; STA ; LDA base+1,Y` --
+  recovered by a distinct idiom gated on an ascending note table).
 
 ### Family wavetable-table lift (both wave columns + extra tables)
 
@@ -85,25 +87,56 @@ across the family:
 * the **command table** via `ASL ; TAY ; LDA param,Y ; PHA`; the **filter** and
   **PW** programs via `LDY grvidx ; LDA filt,Y ; STA grvctr` and
   `LDY pwcur,X ; LDA pwnext,Y ; STA pwcur,X` (these last two share V20's opcode
-  frame, so they generalize to the V20 sub-builds).
+  frame, so they generalize to the V20 sub-builds only).
+
+The **classic family (V6-V18) filter/PW programs are *not* recovered** into the
+editor format, and this is a genuine layout difference, not a missing idiom.
+Disassembly of the V9 (`DRAX/Acid.sid`) and V13 (`Abaddon/Apina.sid`) sweep code
+shows the classic program step advances its cursor **sequentially** (`TYA ; CLC ;
+ADC #$04 ; STA cursor`) with **no next-index column**, and its 4-byte entry
+column order (step, dir, value/reset, …) differs from the NP20-25 editor
+pulse/filter format (value, count, dir+rate, next-absolute-index). A verbatim
+copy would be misread by the editor and a column remap would be an unverified
+guess, so these programs are left absent (noted in `Provenance`) rather than
+fabricated. Only V20-frame builds recover filter/PW.
+
+The **V1/V2 wavetable is likewise not invertible** to the editor's two-column
+format, so V1/V2 stay gated out of editor export. Disassembly of V1
+(`JCH/Beatbassie.sid`, walk at `$1488`) and V2 (`JCH/Caverns.sid`, walk at
+`$14ba`) shows a **single interleaved `(ctrl,note)` stream** (one table, even
+byte = waveform written to the CTRL shadow, odd byte = note), where `$FF` is a
+**restart** whose loop target is reloaded from a **per-voice runtime cell**
+(`$1826,X` / `$170c,X`) seeded at instrument init -- *not* the editor's two
+parallel 256-byte columns with `$7E` hold / `$7F` jump-to-an-inline-target.
+Because the loop point lives off-table, de-interleaving alone cannot reconstruct
+the editor's self-contained jump target; the instrument records are also
+column-organized (waveform/AD in separate columns) rather than 8-byte
+contiguous. Reconstructing the editor form would require fabricating the
+loop-point encoding, so V1/V2 are left rejected.
 
 With both wave columns and the pitch table recovered, `pyjch.extract` produces a
 full family `Tune` and the editor `.prg` writer's `_require_tables` gate passes.
 Over the JCH-dense HVSC dirs (`DRAX`/`Laxity`/`JCH`) **~954 of ~968** recovered
 family/V20 models now recover both wave columns and **~895** pass the table gate
 (up from zero for the non-V20-build family). A full editor export additionally
-requires the song to fit the editor format capacity (≤96-row patterns, ≤114
-patterns, ≤32 instruments, ≤256-byte tables); tunes that exceed those limits are
-gated fully but not editor-exportable.
+requires the song to fit the editor format capacity (≤114 patterns, ≤32
+instruments, ≤256-byte tables). A sequence longer than the editor's 96-**row**
+cap (a row is a player fetch unit -- zero or more command bytes then one note
+byte, not a raw byte) is split losslessly in the writer into consecutive ≤96-row
+chunk-sequences, with the voice's order list rewritten to reference them in order
+(state persists across a sequence boundary: end-of-pattern only resets the
+pattern cursor and advances the order pointer, so the split is behaviourally
+identical). Tunes that still exceed a hard limit (a non-terminating sequence, or
+>114 patterns after the split) are gated fully but not editor-exportable.
 
 Per-version representative outcome (`tests/test_corpus.py::FAMILY_COVERAGE`):
 
 | version | wave-ctrl | wave-note | pitch | command | gate | full export |
 | ------- | :-------: | :-------: | :---: | :-----: | :--: | :---------: |
 | V6/V8/V9/V10/V11/V13/V18 | Y | Y | Y | V18 only | Y | Y |
-| V14/V15 | Y | Y | Y | – | Y | capacity-blocked (pattern >96 rows) |
-| V17 | Y | Y | – | – | – | pitch idiom (`ADC #$00`) absent |
-| V1/V2 | – | – | Y | – | – | CTRL from per-instrument field group, no pointer-indexed wave column |
+| V14/V15 | Y | Y | Y | – | Y | Y (96-row sequence split) |
+| V17 | Y | Y | Y | – | Y | Y (interleaved pitch idiom, no `ADC #$00`) |
+| V1/V2 | – | – | Y | – | – | interleaved (ctrl,note) wave stream, `$FF`-restart target held off-table; not invertible to the editor's two-column format |
 | V20 (code build) | Y | Y | Y | Y | Y | Y |
 
 ## HVSC census and per-version verdict
