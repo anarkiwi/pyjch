@@ -80,51 +80,72 @@ the same table set the `$0Fxx` pointers above resolve to in the reference build:
 
 ## Order-list (sequence) encoding [V]
 
-A voice order list is a stream of **2-byte pairs `(transpose, seq_index)`**:
+The **editor** order list is a stream of **fixed 2-byte pairs
+`(transpose, seq_index)`** — verified verbatim from [`converter_jch.cpp`][sf2]'s
+read loop:
 
-- transpose byte `$FF` → **end of list** (loop/stop terminator);
-- transpose is stored as **`$20 + value`** (editor zero-transpose baseline
-  `$20`); `seq_index` selects the sequence via the lo/hi vector tables.
+```
+transpose      = byte[read + off]
+sequence_index = byte[read + off + 1]
+entry.transpose = 0x20 + transpose     // editor zero-transpose baseline $20
+if transpose == 0xFF: break            // end of list
+```
+
+This is **not** the packed-runtime order stream pyjch recovers (a variable
+stream: `<$80` pattern index, `$80+` inline transpose prefix, `$FE` stop / `$FF`
+loop). The editor form pairs every step with an explicit transpose byte; the
+JCH-Packer collapses that into the compact runtime stream. **Exporting to the
+editor therefore re-encodes** each recovered `OrderEntry(pattern, transpose)` as
+`(0x20 + transpose, pattern)` and appends an `$FF`-transpose terminator.
 
 Do **not** apply CheeseCutter's `$A0`-centred signed-transpose convention here —
-that is a different, JCH-lineage driver. **[G]** loop-vs-stop restart semantics
-beyond the `$FF` terminator are unconfirmed for NP22-25.
+that is a different, JCH-lineage driver. **[G]** the exact packed→editor
+transpose mapping and loop-vs-stop restart semantics beyond `$FF` are still
+unconfirmed for NP22-25.
 
 ## Sequence (pattern) event encoding [V]
 
-Each event is a byte pair `(cmd/instr, note)`. From [`converter_jch.cpp`][sf2]
-plus [Codebase64][cb64] (agreeing):
+Each event is a byte pair `(byte0, note)`. The decisive rule, verbatim from
+[`converter_jch.cpp`][sf2]:
 
-| byte0 | meaning |
-| ----- | ------- |
-| `$7F` | **end of sequence** |
-| `$80` | nothing / no-op row |
-| `$90` | tie (change note, no retrigger) |
-| `$A0`–`$BF` | select instrument `$00`–`$1F` (32 instruments) |
-| `$C0`–`$DF` | **command** — pointer into the Super table |
-| `< $C0` (other) | instrument number |
+```
+byte0 = byte[read + i]; note = byte[read + i + 1]
+if byte0 == 0x7F: break        // end of sequence
+if byte0 >= 0xC0: command = byte0            // a command (Super-table ref)
+else:             instrument = byte0         // an instrument slot
+```
 
-Note byte (`byte1`): `$00` = gate off / rest, `$01+` = note (triggers the active
-instrument), `$7E` = gate hold (`+++`). Examples: `$A2 $24` = instrument 2 +
-C-3; `$80 $7E` = hold; `$80 $00` = empty row; `$90 $25` = tie to C#4.
+So the converter's model is binary: `byte0 >= $C0` → command, else instrument
+slot; `byte0 == $7F` ends. [Codebase64][cb64] refines the instrument-slot range
+(`$80` no-op, `$90` tie, `$A0`–`$BF` select instrument `$00`–`$1F`). Note byte:
+`$00` = gate off / rest, `$01+` = note, `$7E` = gate hold (`+++`). Examples:
+`$A2 $24` = instrument 2 + C-3; `$80 $7E` = hold; `$90 $25` = tie to C#4.
 
-## Command / Super table [V/G]
+## Command / Super table [V]
 
-- 2-column, **row-major** on disk (SF2 transposes to column-major on import);
-  the high nibble of the first byte selects the command type; **`$E0` = tempo**
-  (low byte = tempo). **[V]**
-- The Super table lets one `$C0`–`$DF` sequence byte stack several effects on a
-  channel. The full NP22-25 opcode list is only in `NP22-25 docs.doc`. **[G]**
+Verbatim from [`converter_jch.cpp`][sf2]: two columns, **row-major** on disk;
+`col2 = col1 + row_count`; opcode = `byte & $F0`; **`$E0` = tempo** (value in the
+paired column). SF2 transposes to column-major on import. The Super table lets
+one `$C0`–`$DF` sequence byte stack several effects on a channel; the full
+NP22-25 opcode list is only in `NP22-25 docs.doc`. **[G]**
 
 ## Instrument / wave / pulse / filter tables
 
-**No verified native-JCH instrument record layout is published.** The SF2
-converter reads the instrument/table blocks row-major and transposes them; the
-row/column geometry comes from the SF2 *target* driver, not the JCH file. The
-closest documented relative is **GoatTracker v2** (its changelog states it was
-built "to resemble JCH NewPlayer 21"); use it as a **structural model only**,
-not literal NP22-25 offsets. **[G]** — resolve exact field widths from the
-`.d64` / `docs.doc`.
+`converter_jch.cpp` does **not** hard-code these layouts: it `CopyTable`s
+wave/pulse/filter byte-for-byte and `CopyTableRowToColumnMajor`s the instrument
+table, taking every **row/column count from the SF2 driver metadata**
+(`DriverInfo::TableDefinition` for `sf2driver_np20`), not from the JCH file. So
+this source fixes the table *geometry* (bytes-per-record = the NP20 driver's
+column count) but not the per-byte *meaning*.
+
+The per-byte **field meaning is already recovered in this repo's own RE** of an
+NP20-family tune (`re-trackers/JCH_NewPlayer/jch-architecture.md` §3), and is
+what `pyjch/extract.py` decodes: an **8-byte** instrument record
+`AD, SR, wavspd/flags, filt, fprog, pwstart, wstart, wstart2`. The two remaining
+unknowns for a byte-exact *editor* record are (a) any editor-only trailing bytes
+(e.g. a 16-char name field) beyond the 8 the player consumes, and (b) NP22-25 vs
+NP20 deltas — both resolved only from the `.d64`. GoatTracker v2 (JCH-derived)
+is a cross-check for the field semantics, not a literal layout:
 
 GoatTracker structural model ([readme §6.2][gt2]) — instrument fields:
 
@@ -273,10 +294,19 @@ for release) and **Syndrom's JCH-depacker** (packed → editor format). No
 
 ## Open gaps to close from the release files
 
-1. NP22-25 version-magic string and the exact `$0Fxx` offsets (`.d64` player).
-2. Native NP22-25 instrument record field order / width (`docs.doc` / disasm).
+Resolved from `converter_jch.cpp` (NP20, verified from its read loops): the
+`$0Fxx` offsets, `"20.G"` magic, the editor order-list `(0x20+transpose, seq)`
+pair encoding + `$FF` terminator, the sequence `byte0>=$C0`=command / else
+instrument / `$7F`=end rule, and the 2-column row-major command table (`$E0`
+tempo). Still open, and only in the release binaries:
+
+1. NP22-25 version-magic string and whether the `$0Fxx` offsets shifted vs NP20.
+2. Table **geometry** — bytes-per-instrument and wave/pulse/filter row/column
+   counts — is taken from the SF2 NP20 driver definition (`DriverInfo`); confirm
+   it matches NP22-25, and whether editor records carry trailing (name) bytes
+   beyond the 8 the player consumes.
 3. Pitch-table bytes.
-4. Order-list loop-vs-stop restart semantics beyond `$FF`.
+4. Exact packed→editor transpose mapping; loop-vs-stop restart beyond `$FF`.
 5. Full Super-table opcode list; V22–V25 vs V1–V21 table/command deltas.
 
 Tools: **JC64dis** disassembler for the `.d64`; the SF2 `converter_jch.cpp` as a
