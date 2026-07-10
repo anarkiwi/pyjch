@@ -260,6 +260,13 @@ def _instruments(model, base: int, image_end: int, all_bases, inst_ref) -> List[
     return out
 
 
+_TABLE_MAX = 256  # wave/pitch tables are byte-indexed -> at most 256 entries
+
+
+def _wave_slice(model, base: int, cap: int) -> List[int]:
+    return _slice(model, base, min(cap, base + _TABLE_MAX))
+
+
 def _extract_v20(model, bases) -> Tune:
     load = model.load_addr
     end = load + len(model.image)
@@ -280,12 +287,12 @@ def _extract_v20(model, bases) -> Tune:
     note_end = _next_base(all_bases, bases.wave_note, end)
     ctrl_end = _next_base(all_bases, bases.wave_ctrl, end)
     wavetable = WaveTable(
-        _slice(model, bases.wave_note, note_end),
-        _slice(model, bases.wave_ctrl, ctrl_end),
+        _wave_slice(model, bases.wave_note, note_end),
+        _wave_slice(model, bases.wave_ctrl, ctrl_end),
     )
     filt = _slice(model, bases.filterprog, _next_base(all_bases, bases.filterprog, end))
     pw = _slice(model, bases.pwprog, _next_base(all_bases, bases.pwprog, end))
-    pitch = _slice(model, bases.pitch, _next_base(all_bases, bases.pitch, end))
+    pitch = _wave_slice(model, bases.pitch, _next_base(all_bases, bases.pitch, end))
     commands = _commands(model, bases.cmdparam, cmd_ref)
     instruments = _instruments(model, bases.instruments, end, all_bases, inst_ref)
     return Tune(
@@ -323,36 +330,73 @@ def _commands(model, cmdparam: int, cmd_ref: Set[int]) -> List[Command]:
     return out
 
 
-def _extract_family(model) -> Tune:
+def _extract_family(model) -> Tune:  # pylint: disable=too-many-locals
     load = model.load_addr
     end = load + len(model.image)
-    subtunes, patterns, pattern_raw, inst_ref, _cmd_ref = _collect(model, cmdparam=None)
+    subtunes, patterns, pattern_raw, inst_ref, cmd_ref = _collect(model, model.cmdparam)
     fixed = [
         model.subtune_table,
         model.patternptr_lo,
         model.patternptr_hi,
         model.instruments,
         model.wave_note_col,
+        model.wave_ctrl_col,
         model.pitch_table,
+        model.cmdparam,
+        model.filterprog,
+        model.pwprog,
     ]
     all_bases = _all_bases(model, fixed, set(range(len(patterns))))
     instruments = _instruments(model, model.instruments, end, all_bases, inst_ref)
-    notes = ["command table, pulse/filter programs and hard-restart not recovered"]
+    notes: List[str] = []
     wavetable = None
-    if model.wave_note_col is not None:
+    if model.wave_note_col is not None and model.wave_ctrl_col is not None:
+        note = _wave_slice(
+            model, model.wave_note_col, _next_base(all_bases, model.wave_note_col, end)
+        )
+        ctrl = _wave_slice(
+            model, model.wave_ctrl_col, _next_base(all_bases, model.wave_ctrl_col, end)
+        )
+        wavetable = WaveTable(note, ctrl)
+    elif model.wave_note_col is not None:
         note_end = _next_base(all_bases, model.wave_note_col, end)
-        wavetable = WaveTable(_slice(model, model.wave_note_col, note_end), [])
+        wavetable = WaveTable(_wave_slice(model, model.wave_note_col, note_end), [])
         notes.append("wave ctrl column not recovered (note column only)")
     else:
         notes.append("wavetable not recovered")
     pitch: List[int] = []
     if model.pitch_table is not None:
-        pitch = _slice(
+        pitch = _wave_slice(
             model, model.pitch_table, _next_base(all_bases, model.pitch_table, end)
         )
     else:
         notes.append("pitch table not recovered")
-    notes.append("$C0 pattern commands unclassified (no command table)")
+    filt: List[int] = []
+    if model.filterprog is not None:
+        filt = _slice(
+            model, model.filterprog, _next_base(all_bases, model.filterprog, end)
+        )
+    pw: List[int] = []
+    if model.pwprog is not None:
+        pw = _slice(model, model.pwprog, _next_base(all_bases, model.pwprog, end))
+    commands = (
+        _commands(model, model.cmdparam, cmd_ref) if model.cmdparam is not None else []
+    )
+    if model.cmdparam is None:
+        notes.append("$C0 pattern commands unclassified (no command table)")
+    if model.filterprog is None or model.pwprog is None:
+        notes.append("pulse/filter program not recovered")
+    notes.append("hard-restart not recovered")
+    bases = {
+        "subtune_table": model.subtune_table,
+        "patternptr_lo": model.patternptr_lo,
+        "patternptr_hi": model.patternptr_hi,
+        "instruments": model.instruments,
+    }
+    for key in ("wave_note_col", "wave_ctrl_col", "pitch_table", "cmdparam"):
+        val = getattr(model, key)
+        if val is not None:
+            bases[key] = val
     return Tune(
         name=model.name,
         author=model.author,
@@ -366,22 +410,12 @@ def _extract_family(model) -> Tune:
         pattern_raw=pattern_raw,
         instruments=instruments,
         wavetable=wavetable,
-        pw_program=[],
-        filter_program=[],
-        groove=[],
+        pw_program=_records(pw, PwStep),
+        filter_program=_records(filt, FilterStep),
+        groove=filt[:2],
         pitch_table=pitch,
-        commands=[],
-        provenance=Provenance(
-            "family",
-            model.version,
-            {
-                "subtune_table": model.subtune_table,
-                "patternptr_lo": model.patternptr_lo,
-                "patternptr_hi": model.patternptr_hi,
-                "instruments": model.instruments,
-            },
-            notes,
-        ),
+        commands=commands,
+        provenance=Provenance("family", model.version, bases, notes),
     )
 
 

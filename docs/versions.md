@@ -65,6 +65,47 @@ the same discovery idioms resolve to in-range, coherent tables:
 * (optionally) wavetable note column via `LDA col,Y ; CMP #$7E` and the pitch
   table via `LDA pitch+1,Y ; ADC #$00`.
 
+### Family wavetable-table lift (both wave columns + extra tables)
+
+The V20 player discovers, beyond the required tables, the second **wave-ctrl
+column**, the **pitch**, **command (cmdparam)**, **filter** and **PW-program**
+tables. Those idioms embed V20-specific work-cell addresses, so they are
+**generalized by role** (the per-build cells wildcarded) to lift the same tables
+across the family:
+
+* the **CTRL-shadow** cell is found by the per-frame blit
+  `[LDA shadow,X] {LDY stride,X}? AND gate,X ; STA $D404,Y` (the extra `LDY`
+  appears in V9-V11); the **wave-ctrl column** is then the table stored into it
+  (`LDA ctrl,Y ; STA shadow,X`), anchored by `LDY wtptr,X` and confirmed by the
+  wavetable-tick `INC wtptr,X` (rejecting V1/V2, whose CTRL comes from a
+  per-instrument field group, not a pointer-indexed column);
+* the parallel **wave-note column** is recovered from the `$7F`-jump handler
+  `LDA ctrl,Y ; STA wtptr,X ; TAY ; LDA note,Y` or the note-column test read
+  `LDY wtptr,X ; LDA note,Y ; {CMP #$7E/$7F | BMI/BPL}`;
+* the **command table** via `ASL ; TAY ; LDA param,Y ; PHA`; the **filter** and
+  **PW** programs via `LDY grvidx ; LDA filt,Y ; STA grvctr` and
+  `LDY pwcur,X ; LDA pwnext,Y ; STA pwcur,X` (these last two share V20's opcode
+  frame, so they generalize to the V20 sub-builds).
+
+With both wave columns and the pitch table recovered, `pyjch.extract` produces a
+full family `Tune` and the editor `.prg` writer's `_require_tables` gate passes.
+Over the JCH-dense HVSC dirs (`DRAX`/`Laxity`/`JCH`) **~954 of ~968** recovered
+family/V20 models now recover both wave columns and **~895** pass the table gate
+(up from zero for the non-V20-build family). A full editor export additionally
+requires the song to fit the editor format capacity (≤96-row patterns, ≤114
+patterns, ≤32 instruments, ≤256-byte tables); tunes that exceed those limits are
+gated fully but not editor-exportable.
+
+Per-version representative outcome (`tests/test_corpus.py::FAMILY_COVERAGE`):
+
+| version | wave-ctrl | wave-note | pitch | command | gate | full export |
+| ------- | :-------: | :-------: | :---: | :-----: | :--: | :---------: |
+| V6/V8/V9/V10/V11/V13/V18 | Y | Y | Y | V18 only | Y | Y |
+| V14/V15 | Y | Y | Y | – | Y | capacity-blocked (pattern >96 rows) |
+| V17 | Y | Y | – | – | – | pitch idiom (`ADC #$00`) absent |
+| V1/V2 | – | – | Y | – | – | CTRL from per-instrument field group, no pointer-indexed wave column |
+| V20 (code build) | Y | Y | Y | Y | Y | Y |
+
 ## HVSC census and per-version verdict
 
 Counts from a full `sidid -m` scan of the HVSC `C64Music` tree. "recovered" is
