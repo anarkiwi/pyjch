@@ -100,6 +100,20 @@ copy would be misread by the editor and a column remap would be an unverified
 guess, so these programs are left absent (noted in `Provenance`) rather than
 fabricated. Only V20-frame builds recover filter/PW.
 
+The **V1/V2 wavetable is likewise not invertible** to the editor's two-column
+format, so V1/V2 stay gated out of editor export. Disassembly of V1
+(`JCH/Beatbassie.sid`, walk at `$1488`) and V2 (`JCH/Caverns.sid`, walk at
+`$14ba`) shows a **single interleaved `(ctrl,note)` stream** (one table, even
+byte = waveform written to the CTRL shadow, odd byte = note), where `$FF` is a
+**restart** whose loop target is reloaded from a **per-voice runtime cell**
+(`$1826,X` / `$170c,X`) seeded at instrument init -- *not* the editor's two
+parallel 256-byte columns with `$7E` hold / `$7F` jump-to-an-inline-target.
+Because the loop point lives off-table, de-interleaving alone cannot reconstruct
+the editor's self-contained jump target; the instrument records are also
+column-organized (waveform/AD in separate columns) rather than 8-byte
+contiguous. Reconstructing the editor form would require fabricating the
+loop-point encoding, so V1/V2 are left rejected.
+
 With both wave columns and the pitch table recovered, `pyjch.extract` produces a
 full family `Tune` and the editor `.prg` writer's `_require_tables` gate passes.
 Over the JCH-dense HVSC dirs (`DRAX`/`Laxity`/`JCH`) **~954 of ~968** recovered
@@ -122,7 +136,7 @@ Per-version representative outcome (`tests/test_corpus.py::FAMILY_COVERAGE`):
 | V6/V8/V9/V10/V11/V13/V18 | Y | Y | Y | V18 only | Y | Y |
 | V14/V15 | Y | Y | Y | – | Y | Y (96-row sequence split) |
 | V17 | Y | Y | Y | – | Y | Y (interleaved pitch idiom, no `ADC #$00`) |
-| V1/V2 | – | – | Y | – | – | CTRL from per-instrument field group, no pointer-indexed wave column |
+| V1/V2 | – | – | Y | – | – | interleaved (ctrl,note) wave stream, `$FF`-restart target held off-table; not invertible to the editor's two-column format |
 | V20 (code build) | Y | Y | Y | Y | Y | Y |
 
 ## HVSC census and per-version verdict
