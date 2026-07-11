@@ -18,7 +18,8 @@ grid = pyjch.render_grid(song, nframes=400)
 
 # Register log (clock reg val triples).
 pyjch.write_reglog(
-    pyjch.iter_register_writes(song, max_frames=2500), "tune.reglog"
+    pyjch.register_writes_from_player(pyjch.JchPlayer(song), max_frames=2500),
+    "tune.reglog",
 )
 ```
 
@@ -38,7 +39,8 @@ pyjch reglog tune.sid tune.reglog --seconds 30
   `.play_frame() -> list[(reg, val)]`, `.regs`, `.render_grid(nframes)`.
 - `iter_frames(model, max_frames)` — per-frame writes.
 - `render_grid(model, nframes) -> list[list[int]]` — forward-filled grid.
-- `iter_register_writes` / `read_reglog` / `write_reglog` / `RegWrite`.
+- `register_writes_from_player` / `read_reglog` / `write_reglog` / `RegWrite`
+  (the shared `pysidtracker` register-log surface).
 - `playable(model)` — the V20 soundness gate (returns `V20Bases` or `None`).
 - Model: `Song` (with `orderlist_ptr` / `subpattern_ptr` resolution),
   `NewPlayerModel` (the wavetable-family reader result).

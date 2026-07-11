@@ -1,10 +1,13 @@
 """pysidtracker base-library integration: error hierarchy and parser adapter."""
 
+import pytest
+
 import pysidtracker
 
 from pyjch import reader
 from pyjch.errors import JCHError, SidParseError
 from pyjch.reader import JchSidParser
+from tests.tunes import V0X_REFERENCES
 
 
 def test_base_error_subclasses_sid_error():
@@ -14,8 +17,10 @@ def test_base_error_subclasses_sid_error():
     assert issubclass(SidParseError, pysidtracker.SidError)
 
 
-def test_parser_read_matches_module_parse(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_parser_read_matches_module_parse(relpath, hvsc):
     """JchSidParser().read(path) is value-identical to reader.parse(bytes)."""
+    tune_path = hvsc(relpath)
     data = tune_path.read_bytes()
     from_parser = JchSidParser().read(tune_path)
     from_bytes = reader.parse(data)
@@ -30,8 +35,10 @@ def test_parser_read_matches_module_parse(tune_path):
     assert from_parser.subptr_hi == from_bytes.subptr_hi
 
 
-def test_parser_detect_recognizes_supported(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_parser_detect_recognizes_supported(relpath, hvsc):
     """The canonical V0x signature is recognised -> detect() yields DIRECT."""
+    tune_path = hvsc(relpath)
     detection = JchSidParser().detect(tune_path, init=False)
     assert detection.kind is pysidtracker.PlayroutineKind.DIRECT
     assert detection.anchor is not None

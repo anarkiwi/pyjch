@@ -3,14 +3,22 @@
 import argparse
 from pathlib import Path
 
-from pysidtracker import add_reglog_command, print_info, run_cli
+from pysidtracker import (
+    PAL_CYCLES_PER_FRAME,
+    add_reglog_command,
+    print_info,
+    register_writes_from_player,
+    run_cli,
+    write_reglog,
+)
 
-from pyjch import player, reglog
+from pyjch import player
 from pyjch.editor import np_profile, write_editor_prg
 from pyjch.errors import JCHError, SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
+from pyjch.player import JchPlayer
 from pyjch.reader import read
 from pyjch.serialize import to_json, to_text
 
@@ -67,8 +75,10 @@ def _reglog(args) -> None:
             "(byte-exact players: V0x, V20)"
         )
     frames = round(args.seconds * 50)
-    writes = reglog.iter_register_writes(song, max_frames=frames)
-    reglog.write_reglog(writes, args.output)
+    writes = register_writes_from_player(
+        JchPlayer(song), max_frames=frames, cycles_per_frame=PAL_CYCLES_PER_FRAME
+    )
+    write_reglog(writes, args.output)
     print(f"wrote {args.output}")
 
 

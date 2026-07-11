@@ -5,7 +5,7 @@ network access to HVSC, so the default suite excludes them (see ``pyproject``); 
 dedicated CI job runs ``pytest -m oracle``.  They are never skipped -- an
 unavailable tune or a failed oracle render fails the test rather than hiding a
 regression.  HVSC ``.sid`` files are copyright works: they are downloaded to a
-cache (or a local ``$HVSC`` tree), never committed.
+cache (or a local HVSC tree), never committed.
 
 Both byte-exact JCH driver versions are covered: **V0x** (a :class:`Song`) and
 **V20** (a :class:`NewPlayerModel`), each with real HVSC representatives.  The
@@ -14,28 +14,11 @@ at the fixed PAL cadence -- the sidtrace auto-cadence over-estimates on these
 tunes because they change SID registers only every few frames.
 """
 
-import os
-from pathlib import Path
-
 import pytest
-
-from pysidtracker.oracle import (
-    aligned_match,
-    read_sidtrace,
-    run_sidtrace,
-    sidtrace_grid,
-)
-from pysidtracker.registers import PAL_CYCLES_PER_FRAME
-from pysidtracker.testing import TuneFetchError, resolve_tune
+from pysidtracker import PAL_CYCLES_PER_FRAME, aligned_match
 
 from pyjch import reader
 from pyjch.player import JchPlayer
-
-# Cache under the workspace (a Docker-daemon-visible path, and what CI persists
-# via actions/cache). ``$PYJCH_ORACLE_CACHE`` overrides the location.
-_CACHE = Path(os.environ.get("PYJCH_ORACLE_CACHE", ".oracle-cache"))
-_HVSC = _CACHE / "hvsc"
-_CSV = _CACHE / "csv"
 
 # One+ HVSC representative per byte-exact JCH driver version, each verified to
 # render frame-exact against the sidtrace oracle.
@@ -52,30 +35,11 @@ TUNES = {
 FRAMES = 250
 
 
-def _oracle_grid(path):
-    """PAL-framed sidtrace oracle grid for ``path`` (CSV cached per tune)."""
-    csv = _CSV / f"{Path(path).stem}.csv.zst"
-    if not csv.exists():
-        run_sidtrace(path, csv, seconds=FRAMES // 50 + 2)
-    grid = sidtrace_grid(read_sidtrace(csv), cycles_per_frame=PAL_CYCLES_PER_FRAME)
-    return grid[:FRAMES]
-
-
-@pytest.fixture(params=list(TUNES))
-def tune_id(request):
-    return request.param
-
-
 @pytest.mark.oracle
-def test_render_matches_oracle(tune_id):
+@pytest.mark.parametrize("relpath", list(TUNES.values()), ids=list(TUNES))
+def test_render_matches_oracle(relpath, hvsc, sidtrace_oracle):
     """The unified player reproduces the sidtrace oracle frame-for-frame."""
-    path = resolve_tune(TUNES[tune_id], cache_dir=_HVSC, local_env="HVSC")
-    if path is None:
-        raise TuneFetchError(f"tune {tune_id} unavailable (offline, not cached)")
-    oracle = _oracle_grid(path)
-    rendered = JchPlayer(reader.parse(Path(path).read_bytes())).render_grid(
-        len(oracle) + 4
-    )
-    assert aligned_match(
-        oracle, rendered, max_lead=4
-    ), f"tune {tune_id}: player render does not match the sidtrace oracle"
+    path = hvsc(relpath)
+    oracle = sidtrace_oracle(path, frames=FRAMES, cycles_per_frame=PAL_CYCLES_PER_FRAME)
+    rendered = JchPlayer(reader.parse(path.read_bytes())).render_grid(len(oracle) + 4)
+    assert aligned_match(oracle, rendered, max_lead=4), f"{relpath}: render != oracle"

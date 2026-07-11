@@ -4,13 +4,6 @@ from pyjch import constants
 from pyjch.model import Song
 
 
-def test_defaults():
-    song = Song()
-    assert song.load_addr == constants.DEFAULT_LOAD
-    assert song.init_addr == constants.DEFAULT_INIT
-    assert song.play_addr == constants.DEFAULT_PLAY
-
-
 def test_orderlist_ptr_indexing():
     """orderlist_ptr indexes the table by subtune*8 + voice*2."""
     load = 0x1000

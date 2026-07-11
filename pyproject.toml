@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyjch"
-version = "0.3.0"
+version = "0.4.0"
 description = "Pure-Python reader and player for JCH NewPlayer C64 SID songs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.6.0",
+    "pysidtracker>=0.7.0",
     "py65>=1.1",
 ]
 
@@ -53,6 +53,7 @@ testpaths = ["tests"]
 # via ``-m oracle`` (they are excluded from the default coverage matrix run).
 addopts = "-ra -n auto -m 'not oracle'"
 markers = ["oracle: byte-exact comparison against the sidtrace Docker oracle"]
+hvsc_local_envs = "HVSC JCH_LOCAL_HVSC"
 
 [tool.coverage.run]
 branch = true

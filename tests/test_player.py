@@ -18,13 +18,14 @@ dispatch / playability gate -- not byte-exactness.
 
 import pytest
 
-from pyjch import reader, reglog
+from pyjch import reader
 from pyjch.errors import SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import JchPlayer, iter_frames, playable, render_grid
 
 from tests import _synth_v20 as synth
+from tests.tunes import V0X_REFERENCES
 
 NREG = 25
 
@@ -34,8 +35,10 @@ def _v20_model():
 
 
 # --- version dispatch -------------------------------------------------------
-def test_v0x_model_selects_v0x(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_v0x_model_selects_v0x(relpath, hvsc):
     """A Song drives the V0x routine."""
+    tune_path = hvsc(relpath)
     player = JchPlayer(reader.read(tune_path))
     assert player._version == "v0x"  # pylint: disable=protected-access
     assert isinstance(reader.read(tune_path), Song)
@@ -72,19 +75,25 @@ def test_v20_first_frame_all_registers_then_changed_only():
     assert sum(len(frame) for frame in frames) > 400
 
 
-def test_v0x_render_grid_shape_and_determinism(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_v0x_render_grid_shape_and_determinism(relpath, hvsc):
+    tune_path = hvsc(relpath)
     song = reader.read(tune_path)
     rows = render_grid(song, 64)
     assert len(rows) == 64 and all(len(r) == NREG for r in rows)
     assert render_grid(song, 64) == render_grid(song, 64)
 
 
-def test_v0x_first_frame_all_registers(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_v0x_first_frame_all_registers(relpath, hvsc):
+    tune_path = hvsc(relpath)
     writes = JchPlayer(reader.read(tune_path)).play_frame()
     assert [reg for reg, _ in writes] == list(range(NREG))
 
 
-def test_v0x_loops_forever_until_max_frames(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_v0x_loops_forever_until_max_frames(relpath, hvsc):
+    tune_path = hvsc(relpath)
     assert len(list(iter_frames(reader.read(tune_path), max_frames=500))) == 500
 
 
@@ -115,9 +124,3 @@ def test_non_v20_family_not_playable(idiom):
     assert playable(model) is None
     with pytest.raises(SidParseError):
         JchPlayer(model)
-    with pytest.raises(SidParseError):
-        reglog.make_player(model)
-
-
-def test_make_player_returns_jchplayer():
-    assert isinstance(reglog.make_player(_v20_model()), JchPlayer)

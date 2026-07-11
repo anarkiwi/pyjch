@@ -18,17 +18,16 @@ from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import JchPlayer, iter_frames, playable, render_grid
 from pyjch.reader import JchSidParser, parse, read
-from pyjch.reglog import (
+from pysidtracker import (
     RegWrite,
-    iter_register_writes,
-    make_player,
     read_reglog,
+    register_writes_from_player,
     write_reglog,
 )
 from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "EditorProfile",
@@ -51,13 +50,12 @@ __all__ = [
     "extract",
     "from_json",
     "iter_frames",
-    "iter_register_writes",
-    "make_player",
     "np_profile",
     "parse",
     "playable",
     "read",
     "read_reglog",
+    "register_writes_from_player",
     "render_grid",
     "to_json",
     "to_text",

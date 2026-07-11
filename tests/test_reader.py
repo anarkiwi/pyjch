@@ -6,10 +6,13 @@ import pytest
 
 from pyjch import constants, reader
 from pyjch.errors import SidParseError
+from tests.tunes import V0X_REFERENCES
 
 
-def test_discovers_immediates_and_bases(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_discovers_immediates_and_bases(relpath, hvsc):
     """The reader discovers the per-tune immediates and table bases."""
+    tune_path = hvsc(relpath)
     song = reader.read(tune_path)
     assert song.load_addr == 0x1000
     # Discovered immediates are plain bytes.
@@ -22,8 +25,10 @@ def test_discovers_immediates_and_bases(tune_path):
     assert len(song.freq_hi) == constants.FREQ_TABLE_LEN
 
 
-def test_orderlist_and_subpattern_pointers(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_orderlist_and_subpattern_pointers(relpath, hvsc):
     """Orderlist and subpattern pointers resolve into the loaded image."""
+    tune_path = hvsc(relpath)
     song = reader.read(tune_path)
     for voice in range(constants.VOICES):
         addr = song.orderlist_ptr(0, voice)
@@ -32,8 +37,10 @@ def test_orderlist_and_subpattern_pointers(tune_path):
     assert song.subpattern_ptr(0) >= 0
 
 
-def test_read_from_bytes_matches_path(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_read_from_bytes_matches_path(relpath, hvsc):
     """parse(bytes) and read(path) agree."""
+    tune_path = hvsc(relpath)
     data = tune_path.read_bytes()
     a = reader.parse(data)
     b = reader.read(tune_path)
@@ -41,8 +48,10 @@ def test_read_from_bytes_matches_path(tune_path):
     assert a.subptr_lo == b.subptr_lo
 
 
-def test_read_file_like(tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_read_file_like(relpath, hvsc):
     """read() accepts a file-like object."""
+    tune_path = hvsc(relpath)
     with open(tune_path, "rb") as handle:
         song = reader.read(handle)
     assert song.load_addr == 0x1000

@@ -5,10 +5,12 @@ import struct
 
 import pytest
 
+from pysidtracker import read_reglog
+
 from pyjch import cli
-from pyjch.reglog import read_reglog
 from tests import _synth_v20 as synth
 from tests.test_newplayer import _base_image
+from tests.tunes import V0X_REFERENCES
 
 
 def _synth_sid(tmp_path):
@@ -63,7 +65,9 @@ def test_reglog_family_unsupported(capsys, tmp_path):
     assert "byte-exact playback is not supported" in capsys.readouterr().err
 
 
-def test_info(capsys, tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_info(capsys, relpath, hvsc):
+    tune_path = hvsc(relpath)
     rc = cli.main(["info", str(tune_path)])
     assert rc == 0
     out = capsys.readouterr().out
@@ -71,7 +75,9 @@ def test_info(capsys, tune_path):
     assert "gate on/off:" in out
 
 
-def test_reglog(tmp_path, tune_path):
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_reglog(tmp_path, relpath, hvsc):
+    tune_path = hvsc(relpath)
     dst = tmp_path / "tune.reglog"
     rc = cli.main(["reglog", str(tune_path), str(dst), "--seconds", "1"])
     assert rc == 0

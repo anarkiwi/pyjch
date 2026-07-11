@@ -217,7 +217,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# HVSC test tunes are copyright works -- never committed.
-tests/.tunecache/
-# Oracle cache: HVSC .sid (copyright) + sidtrace CSV traces -- never committed.
-.oracle-cache/
+# HVSC test tunes (copyright) + sidtrace oracle CSV traces -- never committed.
+.tunecache/
