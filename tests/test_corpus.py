@@ -25,10 +25,6 @@ real representatives; a genuinely unreachable tune is a hard failure, never a
 silent skip.  See ``docs/versions.md`` for the full per-version HVSC census.
 """
 
-import os
-import sys
-from pathlib import Path
-
 import pytest
 
 from pyjch import reader
@@ -40,9 +36,6 @@ from pyjch.newplayer import NewPlayerModel
 from pyjch.reader import JchSidParser
 from pysidtracker import SidImage
 from pysidtracker.detect import PlayroutineKind
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import fetch_tunes  # noqa: E402  (after sys.path tweak)
 
 # The V0x layout the byte-exact player replays (proven against the oracle in
 # tests/fixtures/*.grid.txt).
@@ -92,28 +85,6 @@ REJECTED_V0X_VARIANT = {
 }
 
 
-def _resolve(relpath):
-    """A usable path to ``relpath``: local HVSC tree, fetch cache, or mirror.
-
-    Checks a local HVSC tree (``$HVSC`` / ``$JCH_LOCAL_HVSC``) first, then fetches
-    from the public HVSC mirror into the gitignored cache (reused on later runs).
-    A genuinely unreachable tune raises :class:`~pysidtracker.testing.TuneFetchError`
-    -- these tests always run (here and in CI); a missing tune is a hard failure,
-    never a silent skip.
-    """
-    for env in ("HVSC", "JCH_LOCAL_HVSC"):
-        base = os.environ.get(env)
-        if base:
-            cand = Path(base) / relpath
-            if cand.exists():
-                return cand
-    return fetch_tunes.fetch(relpath)
-
-
-def _load(relpath):
-    return Path(_resolve(relpath)).read_bytes()
-
-
 def _assert_coherent_model(model, load=0x1000):
     """A recovered NewPlayerModel describes a coherent song, not garbage."""
     end = load + len(model.image)
@@ -144,9 +115,9 @@ def _assert_coherent_model(model, load=0x1000):
 
 
 @pytest.mark.parametrize("relpath", SUPPORTED.values(), ids=list(SUPPORTED))
-def test_supported_version_parses(relpath):
+def test_supported_version_parses(relpath, hvsc):
     """Every canonical V0x tune parses to a Song, recognises, detects DIRECT."""
-    data = _load(relpath)
+    data = hvsc.read(relpath)
     song = reader.parse(data)
     assert isinstance(song, Song)
     assert song.load_addr == 0x1000
@@ -162,9 +133,9 @@ def test_supported_version_parses(relpath):
 
 
 @pytest.mark.parametrize("relpath", MODEL_RECOVERED.values(), ids=list(MODEL_RECOVERED))
-def test_family_model_recovered(relpath):
+def test_family_model_recovered(relpath, hvsc):
     """A family representative parses to a coherent NewPlayerModel and recognises."""
-    data = _load(relpath)
+    data = hvsc.read(relpath)
     model = reader.parse(data)
     _assert_coherent_model(model)
     assert reader.read(data).subtune_table == model.subtune_table
@@ -175,9 +146,9 @@ def test_family_model_recovered(relpath):
 
 
 @pytest.mark.parametrize("relpath", MODEL_RECOVERED.values(), ids=list(MODEL_RECOVERED))
-def test_family_extracts_to_coherent_tune(relpath):
+def test_family_extracts_to_coherent_tune(relpath, hvsc):
     """Every family representative extracts to a bounded, coherent Tune."""
-    model = reader.parse(_load(relpath))
+    model = reader.parse(hvsc.read(relpath))
     tune = extract(model)
     assert tune.provenance.tier in ("v20", "family")
     assert tune.subtunes and all(len(s.order_lists) == 3 for s in tune.subtunes)
@@ -195,9 +166,9 @@ def test_family_extracts_to_coherent_tune(relpath):
 
 
 @pytest.mark.parametrize("relpath", REJECTED.values(), ids=list(REJECTED))
-def test_other_version_rejected(relpath):
+def test_other_version_rejected(relpath, hvsc):
     """A representative of every unrecoverable version is cleanly rejected."""
-    data = _load(relpath)
+    data = hvsc.read(relpath)
     with pytest.raises(SidParseError):
         reader.parse(data)
     assert JchSidParser().recognize(SidImage.from_bytes(data)) is None
@@ -206,13 +177,13 @@ def test_other_version_rejected(relpath):
 @pytest.mark.parametrize(
     "relpath", REJECTED_V0X_VARIANT.values(), ids=list(REJECTED_V0X_VARIANT)
 )
-def test_v0x_table_variant_rejected(relpath):
+def test_v0x_table_variant_rejected(relpath, hvsc):
     """A V0x-family tune with a table-driven gate routine rejects, not garbage.
 
     recognize() truthfully matches the shared V0x init signature, but parse
     rejects the unsupported layout instead of emitting garbage.
     """
-    data = _load(relpath)
+    data = hvsc.read(relpath)
     assert JchSidParser().recognize(SidImage.from_bytes(data)) is not None
     with pytest.raises(SidParseError):
         reader.parse(data)
@@ -243,7 +214,7 @@ FAMILY_COVERAGE = {
 
 
 @pytest.mark.parametrize("version", MODEL_RECOVERED, ids=list(MODEL_RECOVERED))
-def test_family_table_discovery_matrix(version):
+def test_family_table_discovery_matrix(version, hvsc):
     """Each representative reaches exactly its recorded table-discovery tier.
 
     Asserts the generalized wave-column / pitch idioms recover the tables the
@@ -252,7 +223,7 @@ def test_family_table_discovery_matrix(version):
     tables laid) is emitted for those whose data fits the editor format.
     """
     cov = FAMILY_COVERAGE[version]
-    model = reader.parse(_load(MODEL_RECOVERED[version]))
+    model = reader.parse(hvsc.read(MODEL_RECOVERED[version]))
     tune = extract(model)
     wt = tune.wavetable
     assert bool(wt and wt.note_col) is cov["note"]
@@ -316,14 +287,14 @@ def _voice_sequences(prg, profile, voice):
     return bodies
 
 
-def test_pattern_split_roundtrip_real_tune():
+def test_pattern_split_roundtrip_real_tune(hvsc):
     """A real tune with a >96-row sequence exports; the split is lossless.
 
     Every emitted sequence is <=96 rows, and walking each voice's emitted order
     list and concatenating the chunk bodies reproduces the original recovered
     per-voice sequence stream byte-for-byte (minus injected $7F terminators).
     """
-    tune = extract(reader.parse(_load(SPLIT_REPRESENTATIVE)))
+    tune = extract(reader.parse(hvsc.read(SPLIT_REPRESENTATIVE)))
     # This representative must actually contain an over-cap sequence to split.
     assert any(
         sum(1 for b in raw[:-1] if b < 0x80) > 96 for raw in tune.pattern_raw

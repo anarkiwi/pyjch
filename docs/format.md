@@ -70,9 +70,10 @@ inside a subpattern), and note bytes that index the frequency table.
 ## Player and playback notes
 
 `JchPlayer(model)` exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
-`iter_frames` / `render_grid` / `iter_register_writes` provide the shared `py*`
-register-log surface. `reglog` and the CLI expose byte-exact register logs only
-for the two verified tiers (V0x, V20); model-only versions raise there.
+`iter_frames` / `render_grid` and `pysidtracker.register_writes_from_player`
+provide the shared `py*` register-log surface. The CLI `reglog` command emits
+byte-exact register logs only for the two verified tiers (V0x, V20); model-only
+versions raise there.
 
 ### Byte-exact verdict
 
