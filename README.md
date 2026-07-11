@@ -39,6 +39,10 @@ for writes in pyjch.iter_frames(song, max_frames=50 * 60):
     ...                                  # writes: list[(register, value)]
 ```
 
+Installing pyjch also registers a `jch` format with the shared `pysidtracker`
+command (no separate `pyjch` binary): `pysidtracker info/reglog/wav tune.sid`,
+plus a JCH `pysidtracker export`.
+
 See [docs/usage.md](docs/usage.md) for the register grid, register logs, and the
 CLI, [docs/format.md](docs/format.md) for the format, players, and byte-exact
 validation, [docs/versions.md](docs/versions.md) for the HVSC census, and

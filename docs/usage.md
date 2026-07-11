@@ -25,9 +25,14 @@ pyjch.write_reglog(
 
 ## Command line
 
+pyjch ships no binary of its own; installing it registers a `jch` format with
+the shared `pysidtracker` command (via the `pysidtracker.formats` entry point).
+
 ```bash
-pyjch info   tune.sid
-pyjch reglog tune.sid tune.reglog --seconds 30
+pysidtracker info   tune.sid
+pysidtracker reglog tune.sid tune.reglog --seconds 30
+pysidtracker wav    tune.sid tune.wav
+pysidtracker export tune.sid tune.prg --format editor-prg   # JCH-specific
 ```
 
 ## Public API
