@@ -72,6 +72,7 @@ def corpus_relpaths() -> list[str]:
             "MODEL_RECOVERED",
             "REJECTED",
             "REJECTED_V0X_VARIANT",
+            "SPLIT_REPRESENTATIVE",
         ),
         "tests.test_oracle_hvsc": ("TUNES",),
     }
@@ -86,6 +87,8 @@ def corpus_relpaths() -> list[str]:
                 rels.update(value.values())
             elif isinstance(value, (list, tuple)):
                 rels.update(value)
+            elif isinstance(value, str):
+                rels.add(value)
     return sorted(rels)
 
 

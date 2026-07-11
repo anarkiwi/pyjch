@@ -2,9 +2,11 @@
 
 Tunes are HVSC copyright works, never committed.  ``tune_path`` resolves a
 V0x reference tune from a local HVSC tree (``$JCH_LOCAL_HVSC``/``$HVSC``) if
-present, else a gitignored fetch cache, skipping the test when it is absent and
-there is no network.  Byte-exact validation lives in ``tests/test_oracle_hvsc.py``
-(the shared ``pysidtracker`` sidtrace oracle, marked ``oracle``).
+present, else fetches it from the public HVSC mirror into a gitignored cache
+(reused on later runs).  The tests always run -- a genuinely unreachable tune is
+a hard failure, never a silent skip.  Byte-exact validation lives in
+``tests/test_oracle_hvsc.py`` (the shared ``pysidtracker`` sidtrace oracle,
+marked ``oracle``).
 """
 
 import sys
@@ -12,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from pysidtracker.testing import resolve_tune
+from pysidtracker.testing import TuneFetchError, resolve_tune
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
@@ -32,12 +34,12 @@ def tune_id(request):
 
 @pytest.fixture
 def tune_path(tune_id):
-    """Path to the tune for ``tune_id``, skipping if unavailable."""
+    """Path to the tune for ``tune_id`` (local tree, cache, or mirror fetch)."""
     path = resolve_tune(
         fetch_tunes.TUNES[tune_id],
         cache_dir=fetch_tunes.CACHE,
         local_env="JCH_LOCAL_HVSC",
     )
     if path is None:
-        pytest.skip(f"tune {tune_id} unavailable (offline, not cached)")
+        raise TuneFetchError(f"tune {tune_id} unavailable (offline, not cached)")
     return path

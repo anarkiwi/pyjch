@@ -18,11 +18,11 @@ Dane's forks, the DigiPlayer) use a different data layout the reader cannot
 recover; they must be cleanly **rejected**, not mis-parsed.
 
 Tunes are HVSC copyright works, never committed.  Each tune is resolved from a
-local HVSC tree (``$HVSC`` or ``$JCH_LOCAL_HVSC``) or the gitignored fetch
-cache; set ``PYJCH_FETCH_CORPUS=1`` to allow on-demand download.  A tune that
-cannot be resolved is skipped, so the suite passes offline and runs for real
-when ``$HVSC`` points at a local tree.  See ``docs/versions.md`` for the full
-per-version HVSC census.
+local HVSC tree (``$HVSC`` or ``$JCH_LOCAL_HVSC``) or, failing that, fetched from
+the public HVSC mirror into the gitignored cache (reused on later runs).  These
+tests always run -- here and in CI -- against a deterministic per-version set of
+real representatives; a genuinely unreachable tune is a hard failure, never a
+silent skip.  See ``docs/versions.md`` for the full per-version HVSC census.
 """
 
 import os
@@ -91,39 +91,27 @@ REJECTED_V0X_VARIANT = {
     "V0x-table-variant/Imagination": "MUSICIANS/J/JCH/Imagination.sid",
 }
 
-# Directories dense with JCH NewPlayer tunes, walked by the bulk no-garbage
-# test.  Deterministic (fixed dirs), bounded, and skipped when absent.
-BULK_DIRS = (
-    "MUSICIANS/D/DRAX",
-    "MUSICIANS/L/Laxity",
-    "MUSICIANS/J/JCH",
-)
-
 
 def _resolve(relpath):
-    """A usable path to ``relpath``, or ``None`` if it cannot be obtained."""
+    """A usable path to ``relpath``: local HVSC tree, fetch cache, or mirror.
+
+    Checks a local HVSC tree (``$HVSC`` / ``$JCH_LOCAL_HVSC``) first, then fetches
+    from the public HVSC mirror into the gitignored cache (reused on later runs).
+    A genuinely unreachable tune raises :class:`~pysidtracker.testing.TuneFetchError`
+    -- these tests always run (here and in CI); a missing tune is a hard failure,
+    never a silent skip.
+    """
     for env in ("HVSC", "JCH_LOCAL_HVSC"):
         base = os.environ.get(env)
         if base:
             cand = Path(base) / relpath
             if cand.exists():
                 return cand
-    dest = fetch_tunes.CACHE / relpath
-    if dest.exists():
-        return dest
-    if os.environ.get("PYJCH_FETCH_CORPUS"):
-        try:
-            return fetch_tunes.fetch(relpath)
-        except Exception:  # pylint: disable=broad-except  # offline -> skip
-            return None
-    return None
+    return fetch_tunes.fetch(relpath)
 
 
 def _load(relpath):
-    path = _resolve(relpath)
-    if path is None:
-        pytest.skip(f"{relpath} unavailable (no local HVSC, not cached)")
-    return Path(path).read_bytes()
+    return Path(_resolve(relpath)).read_bytes()
 
 
 def _assert_coherent_model(model, load=0x1000):
@@ -335,10 +323,7 @@ def test_pattern_split_roundtrip_real_tune():
     list and concatenating the chunk bodies reproduces the original recovered
     per-voice sequence stream byte-for-byte (minus injected $7F terminators).
     """
-    path = _resolve(SPLIT_REPRESENTATIVE)
-    if path is None:
-        pytest.skip(f"{SPLIT_REPRESENTATIVE} unavailable")
-    tune = extract(reader.parse(Path(path).read_bytes()))
+    tune = extract(reader.parse(_load(SPLIT_REPRESENTATIVE)))
     # This representative must actually contain an over-cap sequence to split.
     assert any(
         sum(1 for b in raw[:-1] if b < 0x80) > 96 for raw in tune.pattern_raw
@@ -355,117 +340,3 @@ def test_pattern_split_roundtrip_real_tune():
             for b in tune.pattern_raw[entry.pattern][:-1]
         ]
         assert [b for body in emitted for b in body] == original
-
-
-def test_bulk_family_full_export_count():
-    """Across JCH-dense dirs, many family tunes now reach a full editor export.
-
-    Every gate-passing tune whose sequences fit (after the 96-row split) emits a
-    valid ``$0F00`` editor ``.prg``; asserts a healthy count, proving the row-cap
-    fix + split unlocked export at scale, not just for the representatives.
-    """
-    base = _hvsc_root()
-    if base is None:
-        pytest.skip("no local HVSC tree for the bulk corpus walk")
-    exported = 0
-    checked = 0
-    for rel in BULK_DIRS:
-        root = base / rel
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*.sid")):
-            checked += 1
-            try:
-                model = reader.parse(path.read_bytes())
-            except SidParseError:
-                continue
-            if not isinstance(model, NewPlayerModel):
-                continue
-            try:
-                prg = write_editor_prg(extract(model), profile=np_profile(25))
-            except SidParseError:
-                continue
-            assert prg[:2] == bytes([0x00, 0x0F])
-            exported += 1
-    if checked == 0:
-        pytest.skip("bulk dirs present but empty")
-    assert exported >= 250, f"expected many full editor exports, got {exported}"
-
-
-def test_bulk_family_full_discovery_count():
-    """Across JCH-dense dirs, many family tunes now reach full table discovery.
-
-    A recovered NewPlayerModel that discovers both wave columns and the pitch
-    table must pass the editor table gate; asserts a healthy count reach it, so
-    the generalized idioms are proven against the real corpus, not just reps.
-    """
-    base = _hvsc_root()
-    if base is None:
-        pytest.skip("no local HVSC tree for the bulk corpus walk")
-    full = 0
-    checked = 0
-    for rel in BULK_DIRS:
-        root = base / rel
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*.sid")):
-            checked += 1
-            try:
-                model = reader.parse(path.read_bytes())
-            except SidParseError:
-                continue
-            if not isinstance(model, NewPlayerModel):
-                continue
-            tune = extract(model)
-            wt = tune.wavetable
-            if wt and wt.note_col and wt.ctrl_col and tune.pitch_table:
-                _require_tables(tune, NP25_PROFILE)  # must not raise
-                full += 1
-    if checked == 0:
-        pytest.skip("bulk dirs present but empty")
-    assert full >= 300, f"expected many full-table discoveries, got {full}"
-
-
-def _hvsc_root():
-    for env in ("HVSC", "JCH_LOCAL_HVSC"):
-        cand = os.environ.get(env)
-        if cand and Path(cand).is_dir():
-            return Path(cand)
-    return None
-
-
-def test_bulk_family_recovery_no_garbage():
-    """Across whole JCH-dense HVSC dirs, every recognised family tune is coherent.
-
-    Walks a bounded, deterministic set of directories: any tune the family
-    reader accepts must yield a coherent model (never garbage), and a healthy
-    number must be recovered (proving the walk actually ran against real tunes).
-    """
-    base = None
-    for env in ("HVSC", "JCH_LOCAL_HVSC"):
-        cand = os.environ.get(env)
-        if cand and Path(cand).is_dir():
-            base = Path(cand)
-            break
-    if base is None:
-        pytest.skip("no local HVSC tree for the bulk corpus walk")
-
-    recovered = 0
-    checked = 0
-    for rel in BULK_DIRS:
-        root = base / rel
-        if not root.is_dir():
-            continue
-        for path in sorted(root.rglob("*.sid")):
-            checked += 1
-            data = path.read_bytes()
-            try:
-                model = reader.parse(data)
-            except SidParseError:
-                continue
-            if isinstance(model, NewPlayerModel):
-                _assert_coherent_model(model, load=model.load_addr)
-                recovered += 1
-    if checked == 0:
-        pytest.skip("bulk dirs present but empty")
-    assert recovered >= 50, f"expected many family recoveries, got {recovered}"

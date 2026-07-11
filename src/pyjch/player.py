@@ -30,7 +30,7 @@ for V0x, :func:`discover_bases` for V20), so a relocated tune plays unchanged.
 from dataclasses import dataclass
 from typing import List, Optional
 
-from pysidtracker import SID_BASE, MemPlayer
+from pysidtracker import SID_BASE, MemPlayer, find_code_first
 
 from pyjch import constants
 from pyjch.errors import SidParseError
@@ -115,19 +115,14 @@ ADOVR = 0x7C5
 DELAYEN = 0x7CA
 
 
-def _find(image: bytes, prefix: bytes, suffix: bytes) -> Optional[int]:
-    """First ``prefix<word>suffix`` operand (2-byte LE), or ``None``."""
-    start = 0
-    while True:
-        hit = image.find(prefix, start)
-        if hit < 0:
-            return None
-        start = hit + 1
-        op = hit + len(prefix)
-        if op + 2 + len(suffix) > len(image):
-            continue
-        if image[op + 2 : op + 2 + len(suffix)] == suffix:
-            return image[op] | (image[op + 1] << 8)
+def _op(image: bytes, spec: str) -> Optional[int]:
+    """First ``{op}`` operand captured by ``spec`` in ``image``, or ``None``.
+
+    ``spec`` is a :class:`~pysidtracker.CodePattern` string; ``{op:w}`` captures
+    the relocated table base baked into the instruction as a 16-bit operand.
+    """
+    match = find_code_first(image, spec)
+    return None if match is None else match.captures["op"]
 
 
 @dataclass
@@ -161,37 +156,33 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
     """
     if model.pitch_table is None or model.wave_note_col is None:
         return None
-    wave_ctrl = _find(image, b"\xb9", b"\x9d\x5d\x17")  # LDA col,Y ; STA $175D,X
-    filterprog = _find(image, b"\xb9", b"\x8d\x46\x17")  # LDA prog,Y ; STA $1746
-    pwnext = _find(image, b"\xbc\x81\x17\xb9", b"\x9d\x81\x17")  # PWProg_next
-    cmdparam = _find(image, b"\x0a\xa8\xb9", b"\x48")  # ASL;TAY;LDA param,Y;PHA
+    wave_ctrl = _op(image, "B9 {op:w} 9D 5D 17")  # LDA col,Y ; STA $175D,X
+    filterprog = _op(image, "B9 {op:w} 8D 46 17")  # LDA prog,Y ; STA $1746
+    pwnext = _op(image, "BC 81 17 B9 {op:w} 9D 81 17")  # PWProg_next
+    cmdparam = _op(image, "0A A8 B9 {op:w} 48")  # ASL;TAY;LDA param,Y;PHA
     # The gate-off AD/SR re-arm reads two *fixed absolute* cells (LDA abs ; STA
     # $D405/$D406,Y) that only coincide with cmdparam in the reference build.
-    rearm_ad = _find(image, b"\xad", b"\x99\x05\xd4")
-    rearm_sr = _find(image, b"\xad", b"\x99\x06\xd4")
+    rearm_ad = _op(image, "AD {op:w} 99 05 D4")
+    rearm_sr = _op(image, "AD {op:w} 99 06 D4")
     if None in (wave_ctrl, filterprog, pwnext, cmdparam, rearm_ad, rearm_sr):
         return None
     # Instrument-record field offsets must match the reference build (AD+0,
     # SR+1, wave-flags+2, filter+3, filter-prog+4, PW-start+5); some V20-family
     # sub-builds pack instrument records differently -- reject those.
-    wave_field = _find(image, b"\xb9", b"\x48\x29\x80")  # LDA inst+2,Y ; PHA ; AND #$80
-    filt_field = _find(image, b"\xb9", b"\x48\x29\xf0")  # LDA inst+3,Y ; PHA ; AND #$F0
-    fprog_field = _find(image, b"\xb9", b"\x8d\x90\x17")  # LDA inst+4,Y ; STA $1790
+    wave_field = _op(image, "B9 {op:w} 48 29 80")  # LDA inst+2,Y ; PHA ; AND #$80
+    filt_field = _op(image, "B9 {op:w} 48 29 F0")  # LDA inst+3,Y ; PHA ; AND #$F0
+    fprog_field = _op(image, "B9 {op:w} 8D 90 17")  # LDA inst+4,Y ; STA $1790
     instr = model.instruments
     if wave_field != instr + 2 or filt_field != instr + 3 or fprog_field != instr + 4:
         return None
     # The note-path and absolute-path wave-note reads (LDY $1795,X ; LDA col,Y)
     # must index the same column; a rare sub-build splits them -- reject it.
-    note_wave = _find(image, b"\xbc\x95\x17\xb9", b"\x30")  # freq_note wave read
+    note_wave = _op(image, "BC 95 17 B9 {op:w} 30")  # freq_note wave read
     if note_wave != model.wave_note_col:
         return None
-    hard = 0x09
-    sig = image.find(b"\x99\x04\xd4")  # STA $D404,Y
-    while sig >= 2:
-        if image[sig - 2] == 0xA9:  # preceded by LDA #imm -> hard-restart CTRL
-            hard = image[sig - 1]
-            break
-        sig = image.find(b"\x99\x04\xd4", sig + 1)
+    # Hard-restart CTRL immediate: LDA #imm ; STA $D404,Y.
+    hr = find_code_first(image, "A9 {op} 99 04 D4")
+    hard = 0x09 if hr is None else hr.captures["op"]
     end = load + len(image)
     bases = V20Bases(
         pitch=model.pitch_table,
