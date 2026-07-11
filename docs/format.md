@@ -98,9 +98,8 @@ mis-played.
 
 - [versions.md](versions.md) — full per-version HVSC census and support verdict.
 - [editor-format.md](editor-format.md) — the JCH-Editor NP22-25 native song
-  layout (export target: header pointer table, tables, encodings; sourced).
-- [exporter-plan.md](exporter-plan.md) — staged plan to implement the structural
-  exporter (neutral model → JSON / editor-native `.prg`) in this library.
+  layout (`pyjch.editor` export/re-read target: header pointer table, tables,
+  encodings; sourced).
 - `sidtrace` byte-exact register oracle (`tests/test_oracle_hvsc.py`, `-m oracle`).
 - [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) — shared
   container/image/detection base.

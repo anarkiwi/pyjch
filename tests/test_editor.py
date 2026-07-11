@@ -97,6 +97,46 @@ def test_roundtrip_np25_layout_and_tables():
         assert raw[-1] == 0x7F
 
 
+def test_write_read_prg_roundtrip():
+    """``write_editor_prg`` -> ``read_editor_prg`` recovers the tune structures.
+
+    The self-terminating music data (order lists, sequences) round-trips
+    byte-for-byte with no out-of-band length; every terminatorless table reads
+    back verbatim at its ``$0FA0`` pointer-block base.
+    """
+    tune = editor._split_long_patterns(_tune())
+    profile = editor.NP25_PROFILE
+    img = editor.read_editor_prg(
+        editor.write_editor_prg(tune, profile=profile), profile=profile
+    )
+    assert img.magic == profile.version_magic
+    assert img.tempo == tune.subtunes[0].tempo
+    assert img.order_lists == [list(o.raw) for o in tune.subtunes[0].order_lists]
+    assert img.sequences == [list(raw) for raw in tune.pattern_raw]
+    assert img.table(profile.idx_wave, len(tune.wavetable.note_col)) == (
+        tune.wavetable.note_col
+    )
+    assert img.table(profile.idx_wave2, len(tune.wavetable.ctrl_col)) == (
+        tune.wavetable.ctrl_col
+    )
+    assert img.table(profile.idx_pitch, len(tune.pitch_table)) == tune.pitch_table
+    for index, inst in enumerate(tune.instruments):
+        assert img.table(profile.idx_inst, (index + 1) * 8)[index * 8 :] == (
+            list(inst.raw[:8])
+        )
+
+
+def test_read_editor_prg_rejects_wrong_magic():
+    prg = editor.write_editor_prg(_tune(), profile=editor.NP25_PROFILE)
+    with pytest.raises(SidParseError):
+        editor.read_editor_prg(prg, profile=editor.NP20_PROFILE)
+
+
+def test_read_editor_prg_rejects_truncated():
+    with pytest.raises(SidParseError):
+        editor.read_editor_prg(b"\x00", profile=editor.NP25_PROFILE)
+
+
 @pytest.mark.parametrize(
     "profile,magic",
     [

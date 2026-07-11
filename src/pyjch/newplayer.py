@@ -7,10 +7,11 @@ player fully reverse-engineered in
 ``re-trackers/JCH_NewPlayer/{jch-architecture.md,jch-player.asm}`` (that
 disassembly is a ``JCH_NewPlayer_V20`` tune, the largest HVSC bucket).
 
-Those versions run a *different player opcode stream*, so pyjch cannot yet
-replay them byte-exactly.  Their **song DATA**, though, is laid out the same
-way across the whole family -- only relocated -- and is recoverable directly
-from the loaded image:
+The V20 build of this family is replayed byte-exactly by
+:mod:`~pyjch.player`; the other versions run a *different player opcode
+stream* and are recovered as models only (not byte-exact-verified).  Their
+**song DATA**, though, is laid out the same way across the whole family --
+only relocated -- and is recoverable directly from the loaded image:
 
 * a **subtune table** ``{orderptr v0,v1,v2, tempo, ...}`` per subtune,
 * per-voice **order lists** (pattern-index streams, ``$FE`` stop / ``$FF``

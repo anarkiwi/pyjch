@@ -20,6 +20,10 @@ transpose-baseline synthesis.
 
 The default empty ``driver`` yields a zero-filled player region: structurally
 valid (correct pointer block / tables), but not runnable without a stock driver.
+
+:func:`read_editor_prg` inverts the writer: it recovers the song structures
+from an emitted image via the ``$0FA0`` pointer block, so an export round-trips
+back to the same order lists, sequences and tables (see the round-trip tests).
 """
 
 from dataclasses import dataclass, replace
@@ -343,3 +347,115 @@ def write_editor_prg(
         image[offset] = byte
     load = profile.load_addr
     return bytes([load & 0xFF, (load >> 8) & 0xFF]) + bytes(image)
+
+
+@dataclass(frozen=True)
+class EditorImage:
+    """Song structures recovered from an editor ``.prg`` via its ``$0FA0`` block.
+
+    The self-terminating music data -- per-voice order lists (``$FE``/``$FF``)
+    and sequences (``$7F``) -- is recovered byte-for-byte with no out-of-band
+    length.  :meth:`table` reads a terminatorless table (pitch / wave / pulse /
+    filter / instrument / command) verbatim at its pointer-block base for a
+    caller-supplied length.
+    """
+
+    profile: EditorProfile
+    load_addr: int
+    image: bytes
+    magic: bytes
+    tempo: int
+    order_lists: List[List[int]]
+    sequences: List[List[int]]
+
+    def _byte(self, addr: int) -> int:
+        offset = addr - self.load_addr
+        if not 0 <= offset < len(self.image):
+            raise SidParseError(f"address ${addr:04X} outside editor image")
+        return self.image[offset]
+
+    def base(self, index: int) -> int:
+        """Resolve the ``$0FA0`` pointer word for ``index`` to its table base."""
+        addr = self.profile.ptr_addr(index)
+        return self._byte(addr) | (self._byte(addr + 1) << 8)
+
+    def table(self, index: int, length: int) -> List[int]:
+        """Read ``length`` bytes of the table at ``$0FA0`` ``index`` verbatim."""
+        base = self.base(index)
+        return [self._byte(base + offset) for offset in range(length)]
+
+
+def read_editor_prg(
+    prg: bytes, *, profile: EditorProfile = NP25_PROFILE
+) -> EditorImage:
+    """Invert :func:`write_editor_prg`: recover an editor ``.prg``'s structures.
+
+    Reads the ``$0FA0`` pointer block for every table base, the ``$0FEE`` magic
+    and default tempo, then recovers the self-terminating music data -- each
+    voice order list (to ``$FE``/``$FF``) and every referenced sequence (to
+    ``$7F``) -- byte-for-byte with no out-of-band length.  Terminatorless tables
+    are read on demand through :meth:`EditorImage.table`.  Raises
+    :class:`~pyjch.errors.SidParseError` on a truncated image or a magic that
+    does not match ``profile``.
+    """
+    if len(prg) < 2:
+        raise SidParseError("editor .prg too short")
+    load = prg[0] | (prg[1] << 8)
+    image = bytes(prg[2:])
+
+    def byte(addr: int) -> int:
+        offset = addr - load
+        if not 0 <= offset < len(image):
+            raise SidParseError(f"address ${addr:04X} outside editor image")
+        return image[offset]
+
+    def word(addr: int) -> int:
+        return byte(addr) | (byte(addr + 1) << 8)
+
+    magic = bytes(
+        byte(profile.ptr_magic + offset) for offset in range(len(profile.version_magic))
+    )
+    if magic != profile.version_magic:
+        raise SidParseError(
+            f"editor magic {magic!r} != profile {profile.version_magic!r}"
+        )
+    tempo = byte(word(profile.ptr_addr(profile.idx_init)) + 6)
+
+    order_lists: List[List[int]] = []
+    referenced: set = set()
+    for voice in range(3):
+        addr = word(profile.ptr_addr(profile.idx_order[voice]))
+        raw: List[int] = []
+        while True:
+            value = byte(addr)
+            raw.append(value)
+            addr += 1
+            if value in (0xFE, 0xFF):
+                break
+            if value < 0x80:
+                referenced.add(value)
+        order_lists.append(raw)
+
+    seqlo = word(profile.ptr_addr(profile.idx_seqlo))
+    seqhi = word(profile.ptr_addr(profile.idx_seqhi))
+    sequences: List[List[int]] = []
+    for index in range(max(referenced) + 1 if referenced else 0):
+        addr = byte(seqlo + index) | (byte(seqhi + index) << 8)
+        raw = []
+        while True:
+            value = byte(addr)
+            raw.append(value)
+            addr += 1
+            if value == 0x7F:
+                break
+        sequences.append(raw)
+
+    return EditorImage(
+        profile=profile,
+        load_addr=load,
+        image=image,
+        magic=magic,
+        tempo=tempo,
+        order_lists=order_lists,
+        sequences=sequences,
+    )
