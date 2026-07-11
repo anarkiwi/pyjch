@@ -12,9 +12,9 @@ the demoscene. `pyjch` reads it at three levels:
   (Flexible, Simple_Tune): `parse` returns a `Song` the player replays
   register-for-register.
 - **Byte-exact V20 player** — the `JCH_NewPlayer_V20` two-column wavetable
-  engine (largest HVSC bucket): `pyjch.v20player.V20Player` replays the 1,324
-  tunes that are the V20 code build, each validated frame-exact against a py65
-  register oracle. `pyjch.v20player.playable(model)` is the soundness gate.
+  engine (largest HVSC bucket): `pyjch.player.JchPlayer` replays the 1,324
+  tunes that are the V20 code build, each validated frame-exact against the
+  `sidtrace` register oracle. `pyjch.player.playable(model)` is the soundness gate.
 - **Model reader** — the remaining JCH NewPlayer *wavetable family*
   (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
@@ -69,26 +69,29 @@ inside a subpattern), and note bytes that index the frequency table.
 
 ## Player and playback notes
 
-`Player(song)` exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
+`JchPlayer(model)` exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
 `iter_frames` / `render_grid` / `iter_register_writes` provide the shared `py*`
 register-log surface. `reglog` and the CLI expose byte-exact register logs only
 for the two verified tiers (V0x, V20); model-only versions raise there.
 
 ### Byte-exact verdict
 
-Validated against the `preframr-sidtrace` register oracle (PAL, 19656
-cycles/frame, forward-filled, one leading silent play-call aligned over, PW-hi
-registers nibble-masked):
+Both driver versions are validated frame-for-frame against the shared
+`pysidtracker` `sidtrace` register oracle — a patched `sidplayfp` run in Docker
+— framed at the JCH player's fixed PAL cadence (19656 cycles/frame,
+forward-filled, leading silent play-calls aligned over, PW-hi registers
+nibble-masked). See `tests/test_oracle_hvsc.py`:
 
-| Tune | Author | Frames | Residual |
-| --- | --- | --- | --- |
-| Flexible | Scorpio | 368 | **0** (byte-exact) |
-| Simple Tune | JCH | 368 | **0** (byte-exact) |
+| Tune | Author | Version | Frames | Result |
+| --- | --- | --- | --- | --- |
+| Flexible | Scorpio | V0x | 250 | **byte-exact** |
+| Simple Tune | JCH | V0x | 250 | **byte-exact** |
+| 24th Amaranth Grand Prix 3 | DRAX | V20 | 250 | **byte-exact** |
+| 7D Funkt | Impetigo | V20 | 250 | **byte-exact** |
+| Stories | DRAX | V20 | 250 | **byte-exact** |
 
-The V20 player is a faithful transcription of the reverse-engineered play
-routine, validated frame-exact against an independently generated py65 oracle
-over a random ~300-tune sample of the accepted V20 build. `playable()` admits
-only the byte-identical V20 build, so no tune is silently mis-played.
+`playable()` admits only the byte-identical V20 build, so no tune is silently
+mis-played.
 
 ## References
 
@@ -97,6 +100,6 @@ only the byte-identical V20 build, so no tune is silently mis-played.
   layout (export target: header pointer table, tables, encodings; sourced).
 - [exporter-plan.md](exporter-plan.md) — staged plan to implement the structural
   exporter (neutral model → JSON / editor-native `.prg`) in this library.
-- `preframr-sidtrace` register oracle; py65 V20 oracle (`tests/_v20oracle.py`).
+- `sidtrace` byte-exact register oracle (`tests/test_oracle_hvsc.py`, `-m oracle`).
 - [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) — shared
   container/image/detection base.

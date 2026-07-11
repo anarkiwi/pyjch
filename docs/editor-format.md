@@ -171,7 +171,7 @@ a `(cmd, param)` pair. Full opcode list, verified from Laxity's NP21 spy spec
 | `f0 xx` | set master volume `xx` |
 
 `$1x`/`$3x`/`$7x`/`$bx` are unassigned. NP20's `$C0`-bucket classification (used
-by `v20player`/`extract`) is the 20.g4 dialect of this same table. **[G]** V22–V25
+by the V20 routine in `pyjch.player`/`extract`) is the 20.g4 dialect of this same table. **[G]** V22–V25
 may add opcodes — confirm from `NP22-25 docs.doc`.
 
 ## Instrument record (8 bytes) [V]
@@ -197,7 +197,7 @@ already decodes from this repo's own RE:
 Confirmed against real **NP22-25 records in the release `.d64`** (e.g. NP25 inst 0
 `01 F4 A0 00 00 04 00 00`, inst 3 `01 C5 80 00 00 00 00 0E`): +5 = pulse pointer,
 +7 = wave pointer, table = 256 bytes = 32 records — the 21.g5 layout above.
-`v20player`/`extract` decode the **20.g4** dialect (bit6 abs-freq, +6/+7 =
+the V20 routine in `pyjch.player`/`extract` decode the **20.g4** dialect (bit6 abs-freq, +6/+7 =
 `wstart`/`wstart2`), correct for the V20-build tunes they target; an NP21/22-25
 emitter uses the +6 pulse-property / +7 wave-pointer layout.
 
@@ -254,7 +254,7 @@ opcode deltas for V22–V25 are unconfirmed online. **[G]**
 
 pyjch already discovers these same tables *in the packed tune* (per-tune,
 relocated) via player-code idioms (see `pyjch/newplayer.py`,
-`pyjch/v20player.py`). The editor export is the inverse: place the recovered
+`pyjch/player.py`). The editor export is the inverse: place the recovered
 tables at the editor's addresses and write the `$0Fxx` pointer block.
 
 | Editor table | pyjch recovered base |

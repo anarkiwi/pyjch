@@ -16,7 +16,7 @@ from pyjch.errors import JCHError, SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import Player, iter_frames, render_grid
+from pyjch.player import JchPlayer, iter_frames, playable, render_grid
 from pyjch.reader import JchSidParser, parse, read
 from pyjch.reglog import (
     RegWrite,
@@ -27,13 +27,13 @@ from pyjch.reglog import (
 )
 from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
-from pyjch.v20player import V20Player, playable as v20_playable
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "EditorProfile",
     "JCHError",
+    "JchPlayer",
     "JchSidParser",
     "NP20_PROFILE",
     "NP21_PROFILE",
@@ -43,12 +43,10 @@ __all__ = [
     "NP25_PROFILE",
     "NP2X_PROFILE",
     "NewPlayerModel",
-    "Player",
     "RegWrite",
     "SidParseError",
     "Song",
     "Tune",
-    "V20Player",
     "__version__",
     "extract",
     "from_json",
@@ -57,11 +55,11 @@ __all__ = [
     "make_player",
     "np_profile",
     "parse",
+    "playable",
     "read",
     "read_reglog",
     "render_grid",
     "to_json",
     "to_text",
-    "v20_playable",
     "write_editor_prg",
 ]

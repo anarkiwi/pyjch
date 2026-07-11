@@ -1,10 +1,10 @@
 """Recover a neutral :class:`~pyjch.songmodel.Tune` from a parsed model.
 
 :func:`extract` walks the tables :mod:`pyjch.newplayer` located (and, when the
-tune is the V20 code build, the extra tables :mod:`pyjch.v20player` resolves)
-and decodes them with exactly the semantics the V20 player applies at runtime --
-statically, without re-executing the player.  Decode rules mirrored from
-``pyjch.v20player``:
+tune is the V20 code build, the extra tables :func:`pyjch.player.discover_bases`
+resolves) and decodes them with exactly the semantics the V20 player applies at
+runtime -- statically, without re-executing the player.  Decode rules mirrored
+from the V20 routine in :mod:`pyjch.player`:
 
 * order lists: ``$FE`` stop / ``$FF`` loop / ``$80+`` transpose prefix;
 * patterns: walk to ``$7F``; ``$80|$0F`` duration (+``$10`` delay), ``$A0|$1F``
@@ -23,7 +23,7 @@ will not decode coherently is left absent and noted in
 from dataclasses import asdict
 from typing import List, Optional, Set
 
-from pyjch import v20player
+from pyjch import player
 from pyjch.errors import SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
@@ -442,7 +442,7 @@ def extract(model) -> Tune:
     """Extract a neutral :class:`~pyjch.songmodel.Tune` from a parsed model.
 
     Full V20 decode when the tune is the V20 code build
-    (:func:`pyjch.v20player.playable`), else the family subset with absent
+    (:func:`pyjch.player.playable`), else the family subset with absent
     tables noted.  Raises :class:`~pyjch.errors.SidParseError` for a V0x
     :class:`~pyjch.model.Song` (out of scope for this wavetable-family export).
     """
@@ -453,7 +453,7 @@ def extract(model) -> Tune:
         )
     if not isinstance(model, NewPlayerModel):
         raise SidParseError(f"cannot extract a Tune from {type(model).__name__}")
-    bases = v20player.playable(model)
+    bases = player.playable(model)
     if bases is not None:
         return _extract_v20(model, bases)
     return _extract_family(model)

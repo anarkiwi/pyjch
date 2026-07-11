@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pysidtracker import add_reglog_command, print_info, run_cli
 
-from pyjch import reglog, v20player
+from pyjch import player, reglog
 from pyjch.editor import np_profile, write_editor_prg
 from pyjch.errors import JCHError, SidParseError
 from pyjch.extract import extract
@@ -37,7 +37,7 @@ def _info_v0x(song: Song) -> None:
 
 
 def _info_family(song: NewPlayerModel) -> None:
-    if v20player.playable(song) is not None:
+    if player.playable(song) is not None:
         print("player:      JCH NewPlayer V20 (byte-exact)")
     else:
         print(f"player:      JCH NewPlayer family ({song.version}); model recovered")
@@ -60,7 +60,7 @@ def _info(args) -> None:
 
 def _reglog(args) -> None:
     song = read(args.song)
-    if isinstance(song, NewPlayerModel) and v20player.playable(song) is None:
+    if isinstance(song, NewPlayerModel) and player.playable(song) is None:
         raise SidParseError(
             f"{song.version}: song model recovered, but byte-exact playback is "
             "not supported for this JCH NewPlayer family version "

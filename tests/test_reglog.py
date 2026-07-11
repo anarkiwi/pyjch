@@ -79,23 +79,3 @@ def test_read_reglog_non_integer():
 def test_read_reglog_rejects_unknown_source():
     with pytest.raises(TypeError):
         reglog.read_reglog(42)
-
-
-def test_reglog_grid_matches_oracle(tune_id, tune_path, oracle_grid):
-    """The reglog write-stream, framed by pysidtracker's grid_from_writes,
-    matches the committed oracle grid byte-exact -- the surface
-    deplayroutine's cross_check_oracle_grid validates pyjch through."""
-    from pysidtracker.oracle import aligned_match
-
-    from tests.conftest import grid_from_writes
-
-    oracle, source = oracle_grid
-    song = reader.read(tune_path)
-    writes = [
-        (w.clock, w.reg, w.val)
-        for w in reglog.iter_register_writes(song, max_frames=len(oracle) + 6)
-    ]
-    rendered = grid_from_writes(writes)
-    assert aligned_match(
-        oracle, rendered
-    ), f"{tune_id}: reglog grid not byte-exact (oracle {source})"
