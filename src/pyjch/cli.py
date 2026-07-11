@@ -5,7 +5,9 @@ from pathlib import Path
 
 from pysidtracker import (
     PAL_CYCLES_PER_FRAME,
+    SidImage,
     add_reglog_command,
+    cycles_per_frame_for_flags,
     print_info,
     register_writes_from_player,
     run_cli,
@@ -14,7 +16,7 @@ from pysidtracker import (
 
 from pyjch import player
 from pyjch.editor import np_profile, write_editor_prg
-from pyjch.errors import JCHError, SidParseError
+from pyjch.errors import JCHError
 from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
@@ -68,15 +70,16 @@ def _info(args) -> None:
 
 def _reglog(args) -> None:
     song = read(args.song)
-    if isinstance(song, NewPlayerModel) and player.playable(song) is None:
-        raise SidParseError(
-            f"{song.version}: song model recovered, but byte-exact playback is "
-            "not supported for this JCH NewPlayer family version "
-            "(byte-exact players: V0x, V20)"
-        )
+    data = Path(args.song).read_bytes()
+    # Frame the log at the tune's own clock; a bare .prg has no header (-> PAL).
+    cycles = PAL_CYCLES_PER_FRAME
+    if data[:4] in (b"PSID", b"RSID"):
+        header = SidImage.from_bytes(data).header
+        if header is not None:
+            cycles = cycles_per_frame_for_flags(header.flags)
     frames = round(args.seconds * 50)
     writes = register_writes_from_player(
-        JchPlayer(song), max_frames=frames, cycles_per_frame=PAL_CYCLES_PER_FRAME
+        JchPlayer(song), max_frames=frames, cycles_per_frame=cycles
     )
     write_reglog(writes, args.output)
     print(f"wrote {args.output}")

@@ -19,8 +19,9 @@ the demoscene. `pyjch` reads it at three levels:
   (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
   (subtune/order-list/pattern/instrument tables) directly from the image. These
-  versions run a different player opcode stream, so playback is not
-  byte-exact-verified.
+  versions also play byte-exactly: `JchPlayer` runs the tune's own 6502 driver
+  on py65 via `pysidtracker.EmuPlayer` (recovering the model and byte-exact
+  playback are separate concerns).
 
 A few genuinely different players (V3/V4/V7/V19, `Glover_NewPlayer_V21`,
 `Dane_NewPlayer`, `JCH_DigiPlayer`) and packed/relocated tunes are cleanly
@@ -72,27 +73,33 @@ inside a subpattern), and note bytes that index the frequency table.
 `JchPlayer(model)` exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
 `iter_frames` / `render_grid` and `pysidtracker.register_writes_from_player`
 provide the shared `py*` register-log surface. The CLI `reglog` command emits
-byte-exact register logs only for the two verified tiers (V0x, V20); model-only
-versions raise there.
+byte-exact register logs for every recovered version (V0x/V20 from their native
+engines, the rest via `EmuPlayer`).
 
 ### Byte-exact verdict
 
-Both driver versions are validated frame-for-frame against the shared
-`pysidtracker` `sidtrace` register oracle — a patched `sidplayfp` run in Docker
-— framed at the JCH player's fixed PAL cadence (19656 cycles/frame,
+Every recovered JCH NewPlayer version plays byte-exactly: V0x and V20 through
+their native pure-Python engines, and every other recovered family version
+(V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) by running the tune's own 6502
+driver on py65 via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
+against the shared `pysidtracker` `sidtrace` register oracle — a patched
+`sidplayfp` run in Docker — over 60 seconds each, framed at the tune's own clock
+(`cycles_per_frame_for_flags`: PAL 19656 or NTSC 17095 cycles/frame,
 forward-filled, leading silent play-calls aligned over, PW-hi registers
-nibble-masked). See `tests/test_oracle_hvsc.py`:
+nibble-masked). Every version in the table below is validated; a representative
+subset:
 
-| Tune | Author | Version | Frames | Result |
+| Tune | Author | Version | Engine | Result |
 | --- | --- | --- | --- | --- |
-| Flexible | Scorpio | V0x | 250 | **byte-exact** |
-| Simple Tune | JCH | V0x | 250 | **byte-exact** |
-| 24th Amaranth Grand Prix 3 | DRAX | V20 | 250 | **byte-exact** |
-| 7D Funkt | Impetigo | V20 | 250 | **byte-exact** |
-| Stories | DRAX | V20 | 250 | **byte-exact** |
+| Flexible | Scorpio | V0x | native | **byte-exact** |
+| 7D Funkt | Impetigo | V20 | native | **byte-exact** |
+| Acid 1988 | JCH | V6 | EmuPlayer | **byte-exact** |
+| Lunardive (NTSC) | Ahz | V15 | EmuPlayer | **byte-exact** |
+| 1st Chaff | — | V17 | EmuPlayer | **byte-exact** |
 
-`playable()` admits only the byte-identical V20 build, so no tune is silently
-mis-played.
+`playable()` admits only the byte-identical V20 build to the native engine;
+every other recovered version plays byte-exactly through `EmuPlayer`, so no
+tune is silently mis-played.
 
 ## References
 

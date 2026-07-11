@@ -8,10 +8,10 @@ pyjch reads two tiers of JCH NewPlayer tune:
 * the later **wavetable family** (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18/
   V20), whose *song DATA* the version-aware reader recovers directly from the
   loaded image -- ``parse`` returns a :class:`~pyjch.newplayer.NewPlayerModel`.
-  Playback of these versions is not byte-exact-verified; the contract tested
-  here is that the recovered **model is coherent** (table bases in range, order
-  lists terminate through in-range pattern pointers, an instrument record is
-  present), never garbage.
+  The contract tested here is that the recovered **model is coherent** (table
+  bases in range, order lists terminate through in-range pattern pointers, an
+  instrument record is present), never garbage; byte-exact playback of these
+  versions is validated separately in ``tests/test_oracle_hvsc.py``.
 
 A handful of genuinely different players (V3/V4/V5/V7/V12/V19, Glover's and
 Dane's forks, the DigiPlayer) use a different data layout the reader cannot

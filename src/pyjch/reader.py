@@ -153,8 +153,9 @@ def parse(data: bytes):
     Returns a :class:`~pyjch.model.Song` for the canonical, byte-exact-replay
     ``JCH_NewPlayer_V0x`` layout, or a :class:`~pyjch.newplayer.NewPlayerModel`
     for the later wavetable-family versions (V1/V2/V3/V6/V8/V9/V10/V11/V13/
-    V14/V15/V17/V18/V20) whose song DATA this reader recovers (playback not
-    byte-exact-verified; see :mod:`pyjch.newplayer`).
+    V14/V15/V17/V18/V20) whose song DATA this reader recovers (byte-exact
+    playback is a separate concern -- native for V20, else via
+    :class:`~pysidtracker.EmuPlayer`; see :mod:`pyjch.newplayer`).
 
     Raises :class:`~pyjch.errors.SidParseError` when the image is neither --
     rather than returning meaningless values out of a foreign player's code.
@@ -216,8 +217,9 @@ class JchSidParser(BaseSidParser):
     NewPlayer wavetable-family layout, so :meth:`detect` classifies a tune whose
     song model this reader recovers statically as ``DIRECT`` and reports
     ``UNKNOWN`` for foreign players / unrecoverable versions.  ``DIRECT`` here
-    means the song model is recovered directly from the loaded image; it does
-    not assert byte-exact replay of the family versions (only V0x and V20 are).
+    means the song model is recovered directly from the loaded image; every
+    recovered version also replays byte-exact (V0x/V20 via the native engine,
+    the rest via :class:`~pysidtracker.EmuPlayer`).
     """
 
     error_class: type = SidParseError

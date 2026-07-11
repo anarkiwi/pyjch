@@ -33,17 +33,19 @@ pyjch reads JCH NewPlayer tunes at three levels:
    table, per-voice order lists, pattern-pointer tables, instrument records,
    and (where present) the wavetable note column and pitch table. These
    versions run a *different player opcode stream* (or a V20 sub-build with a
-   different instrument-record layout / relocated code), so pyjch does **not**
-   replay them byte-exactly; the reader recovers the *model* and validates it
-   is **coherent** (bases in range, order lists terminate through in-range
-   pattern pointers, instrument records present), never garbage.
+   different instrument-record layout / relocated code); the reader recovers
+   the *model* and validates it is **coherent** (bases in range, order lists
+   terminate through in-range pattern pointers, instrument records present),
+   never garbage. Playback is a separate concern and is byte-exact:
+   `pyjch.player.JchPlayer` runs the tune's own 6502 driver on py65 via
+   `pysidtracker.EmuPlayer`.
 
 All tiers discover per-tune addresses by their surrounding player-code
 instruction **idiom** (relocation-safe), not a fixed offset. When neither a
 byte-exact layout nor a coherent family model can be recovered, `parse` raises
 `SidParseError` rather than returning meaningless bytes. `reglog` / the CLI
-expose byte-exact register logs only for the two verified tiers (V0x, V20);
-model-only versions raise there.
+expose byte-exact register logs for every recovered version (V0x/V20 from their
+native engines, the rest via `EmuPlayer`).
 
 ## Was the "genuinely different players" claim overstated?
 
@@ -51,11 +53,11 @@ model-only versions raise there.
 NewPlayer versions were "genuinely different players" and rejected V1–V21
 (3,600+ tunes). That is true of the *player opcode stream* — the AD/SR path,
 gate handling and per-frame engine do differ between versions. For **V20** (the
-largest bucket) the opcode stream is now fully transcribed and its playback
-**is** byte-exact (see below); for the other family versions byte-exact playback
-is not yet done, but the **song data layout is the same across the whole
-wavetable family, only relocated**, and is recoverable directly from the loaded
-image. Independent byte analysis of representatives from every bucket confirms
+largest bucket) the opcode stream is now fully transcribed into a native engine;
+the other family versions play byte-exactly by running their own 6502 driver on
+py65 via `EmuPlayer`. Either way the **song data layout is the same across the
+whole wavetable family, only relocated**, and is recoverable directly from the
+loaded image. Independent byte analysis of representatives from every bucket confirms
 the same discovery idioms resolve to in-range, coherent tables:
 
 * subtune table via `LDX #$00 ; LDA subtune,Y ; STA abs,X`,
@@ -185,28 +187,30 @@ or `Song` for V0x).
 | `V17`  | 238  | 206 | family | model recovered |
 | `V18`  | 108  | 101 | family | model recovered |
 | `V19`  | 56   | 0   | different pointer scheme | rejected (self-modified per-voice pointers, not a `,Y` table) |
-| `V20`  | 1737 | 1647 | family (RE-documented) | **byte-exact player** for the 1,324 that are the V20 code build; the rest model-recovered |
+| `V20`  | 1737 | 1647 | family (RE-documented) | **native byte-exact player** for the 1,324 that are the V20 code build; the rest of the recovered tunes play byte-exact via `EmuPlayer` |
 | `Glover_NewPlayer_V21` | 67 | 0 | different fork | rejected |
 | `Dane_NewPlayer` | 19 | 0 | different fork | rejected |
 | `JCH_DigiPlayer` | 3 | 0 | different | rejected |
 
 **Reader coverage: 2 → ~3,324 tunes** (2 V0x byte-exact + 3,322 family models).
-**Byte-exact playback: 2 V0x + 1,324 V20 = 1,326 tunes.**  Of the 1,737
-sidid-`V20` tunes, 1,324 are the byte-identical V20 code build that
-`pyjch.player.playable` accepts; the remainder are packed/relocated-code rips,
-or rare sub-builds with a different instrument-record layout or a split wave-note
-column, which are gated out and kept at *model recovered; playback not
-byte-exact-verified* rather than mis-played.  Both the V0x and V20 routines of
-the unified `pyjch.player.JchPlayer` are validated frame-exact against the
-shared `sidtrace` oracle (`tests/test_oracle_hvsc.py`), historically also over a
-**random ~300-tune sample**
-of the accepted set spanning many authors (100% frame-exact for the full sampled
-horizon, 120–600 frames).  Per-tune verification of every one of the 1,324 is not
-individually asserted — the guarantee is that `playable()` admits only the
-byte-identical V20 build, which the sample validates.  The other family versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/
-V17/V18) are recovered by the shared idiom set plus a per-tune coherence gate and
-carry the same honest model-only label; their player opcode streams differ from
-V20's, so byte-exactness there is not claimed.
+**Byte-exact playback: every recovered tune** — V0x and the 1,324 V20 code-build
+tunes through native pure-Python engines, the rest via `EmuPlayer` (the tune's
+own 6502 driver on py65).  Of the 1,737 sidid-`V20` tunes, 1,324 are the
+byte-identical V20 code build that `pyjch.player.playable` accepts for the
+**native** V20 engine; the remainder are packed/relocated-code rips, or rare
+sub-builds with a different instrument-record layout or a split wave-note column,
+which are gated out of the native engine and play byte-exact via `EmuPlayer`
+instead.  Both native routines of the unified `pyjch.player.JchPlayer` are
+validated frame-exact against the shared `sidtrace` oracle
+(`tests/test_oracle_hvsc.py`), historically also over a **random ~300-tune
+sample** of the native-accepted set spanning many authors (100% frame-exact for
+the full sampled horizon, 120–600 frames).  Per-tune verification of every one of
+the 1,324 is not individually asserted — the guarantee is that `playable()`
+admits only the byte-identical V20 build to the native engine.  The other family
+versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) are recovered by the shared
+idiom set plus a per-tune coherence gate; their player opcode streams differ from
+V20's, so rather than a native transcription they play byte-exact via `EmuPlayer`
+(also validated against the `sidtrace` oracle).
 
 ### V20 byte-exact validation
 

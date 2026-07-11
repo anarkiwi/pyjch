@@ -7,11 +7,12 @@ player fully reverse-engineered in
 ``re-trackers/JCH_NewPlayer/{jch-architecture.md,jch-player.asm}`` (that
 disassembly is a ``JCH_NewPlayer_V20`` tune, the largest HVSC bucket).
 
-The V20 build of this family is replayed byte-exactly by
-:mod:`~pyjch.player`; the other versions run a *different player opcode
-stream* and are recovered as models only (not byte-exact-verified).  Their
-**song DATA**, though, is laid out the same way across the whole family --
-only relocated -- and is recoverable directly from the loaded image:
+The V20 build of this family is replayed byte-exactly by the native engine in
+:mod:`~pyjch.player`; every other recovered version plays byte-exactly too, by
+running the tune's own 6502 driver on py65 via
+:class:`~pysidtracker.EmuPlayer`.  This reader is a separate concern: it
+recovers the **song DATA**, which is laid out the same way across the whole
+family -- only relocated -- directly from the loaded image:
 
 * a **subtune table** ``{orderptr v0,v1,v2, tempo, ...}`` per subtune,
 * per-voice **order lists** (pattern-index streams, ``$FE`` stop / ``$FF``
@@ -31,7 +32,8 @@ terminate within the image, pattern pointers in range); otherwise it raises,
 so it never emits garbage from a foreign player.
 
 This is a *reader*, not a player: a recovered model is the recovered song
-structure, not a byte-exact-verified replay.  See ``docs/versions.md``.
+structure.  Byte-exact playback is a separate concern (native for V20, via
+:class:`~pysidtracker.EmuPlayer` for the rest).  See ``docs/versions.md``.
 """
 
 from dataclasses import dataclass
