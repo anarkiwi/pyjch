@@ -58,11 +58,15 @@ def test_info_family_model(capsys, tmp_path):
     assert "orderlist @" in out
 
 
-def test_reglog_family_unsupported(capsys, tmp_path):
+def test_reglog_family_emulated(capsys, tmp_path):
+    # A recovered family version is played (byte-exactly) via EmuPlayer, so the
+    # reglog is produced rather than refused.
     path = _family_psid(tmp_path)
-    rc = cli.main(["reglog", str(path), str(tmp_path / "out.reglog")])
-    assert rc == 1
-    assert "byte-exact playback is not supported" in capsys.readouterr().err
+    out = tmp_path / "out.reglog"
+    rc = cli.main(["reglog", str(path), str(out), "--seconds", "1"])
+    assert rc == 0
+    assert out.exists()
+    assert "wrote" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("relpath", V0X_REFERENCES)

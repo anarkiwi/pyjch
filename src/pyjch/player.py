@@ -1,8 +1,11 @@
 """The JCH NewPlayer playroutine, in Python, as one player over its versions.
 
-The JCH NewPlayer shipped in several driver versions.  Two of them are
-transcribed here byte-exactly (validated frame-for-frame against the sidtrace
-register oracle -- see ``tests/test_oracle_hvsc.py``):
+The JCH NewPlayer shipped in several driver versions.  Every recovered version
+plays byte-exactly (validated frame-for-frame against the sidtrace register
+oracle -- see ``tests/test_oracle_hvsc.py``).  Two of them run native
+pure-Python engines transcribed here; every other recovered version plays via
+:class:`~pysidtracker.EmuPlayer`, which runs the tune's own 6502 driver on
+py65.  The two native engines are:
 
 * **V0x** -- the canonical ``JCH_NewPlayer_V0x`` layout (init ``FUN_1060`` /
   play ``FUN_10e8``): per-voice opcode streams walked through the zero-page
@@ -30,7 +33,7 @@ for V0x, :func:`discover_bases` for V20), so a relocated tune plays unchanged.
 from dataclasses import dataclass
 from typing import List, Optional
 
-from pysidtracker import SID_BASE, MemPlayer, find_code_first
+from pysidtracker import SID_BASE, EmuPlayer, MemPlayer, find_code_first
 
 from pyjch import constants
 from pyjch.errors import SidParseError
@@ -220,8 +223,10 @@ def playable(model) -> Optional[V20Bases]:
     """Return ``V20Bases`` if ``model`` is a byte-exact-replayable V20 tune.
 
     Requires the code base (init) to be a ``JMP`` vector and every V20 idiom to
-    resolve in range.  ``None`` for any other NewPlayer family build (kept at
-    the honest "model recovered; playback not byte-exact-verified" tier).
+    resolve in range.  This gates only the NATIVE V20 engine; ``None`` for any
+    other NewPlayer family build, which :class:`JchPlayer` then plays
+    byte-exactly via :class:`~pysidtracker.EmuPlayer` (the tune's own 6502
+    driver on py65) rather than a native transcription.
     """
     image = model.image
     init = model.init_addr
@@ -234,12 +239,15 @@ def playable(model) -> Optional[V20Bases]:
 class JchPlayer(MemPlayer):
     """Play a JCH NewPlayer tune one frame at a time (V0x or V20).
 
-    ``model`` is a :class:`~pyjch.model.Song` (drives the byte-exact **V0x**
-    routine) or a :class:`~pyjch.newplayer.NewPlayerModel` (drives the byte-exact
-    **V20** engine when :func:`playable`; otherwise :class:`SidParseError`, since
-    only V0x and V20 are byte-exact-replayable).  :meth:`play_frame` runs one
-    50 Hz tick, returning the SID register writes; :meth:`render_grid` (from
-    :class:`MemPlayer`) yields the forward-filled 25-register per-frame grid.
+    ``model`` is a :class:`~pyjch.model.Song` (drives the native pure-Python
+    **V0x** routine) or a :class:`~pyjch.newplayer.NewPlayerModel` (drives the
+    native **V20** engine when :func:`playable`).  Any other recovered family
+    build is played byte-exactly by running the tune's own 6502 driver on py65
+    via :class:`~pysidtracker.EmuPlayer` -- so every recovered JCH NewPlayer tune
+    plays register-exact, whether or not its version has a native transcription.
+    :meth:`play_frame` runs one tick, returning the SID register writes;
+    :meth:`render_grid` (from :class:`MemPlayer`) yields the forward-filled
+    25-register per-frame grid.
     """
 
     # pylint: disable=too-many-instance-attributes  # full player machine state
@@ -255,31 +263,45 @@ class JchPlayer(MemPlayer):
             image, load = model.image, model.load_addr
         elif isinstance(model, NewPlayerModel):
             bases = playable(model)
-            if bases is None:
-                raise SidParseError(
-                    f"{model.version}: song model recovered, but byte-exact "
-                    "playback is not supported for this JCH NewPlayer family "
-                    "version (byte-exact players: V0x, V20)"
-                )
-            self._version = "v20"
-            self.b = bases
-            self.cb = model.init_addr
+            if bases is not None:
+                self._version = "v20"
+                self.b = bases
+                self.cb = model.init_addr
+            else:
+                # Any other recovered family build: play it byte-exactly by
+                # running the tune's own 6502 driver on py65 (EmuPlayer), rather
+                # than transcribing each version's playroutine by hand.
+                self._version = "emu"
+                self._emu_init = model.init_addr
+                self._emu_play = model.play_addr
             image, load = model.image, model.load_addr
         else:
             raise SidParseError(f"cannot play a {type(model).__name__}")
+        self._emu_image = image
         super().__init__(image, load, subtune)
 
     def _init(self, subtune: int) -> None:
         if self._version == "v0x":
             self._init_v0x(subtune)
-        else:
+        elif self._version == "v20":
             self._init_v20(subtune)
+        else:
+            self._emu = EmuPlayer(
+                self._emu_image, self._load, self._emu_init, self._emu_play, subtune
+            )
 
     def _frame(self) -> None:
         if self._version == "v0x":
             self._frame_v0x()
-        else:
+        elif self._version == "v20":
             self._frame_v20()
+        else:
+            self._emu._frame()
+
+    def snapshot(self) -> List[int]:
+        if self._version == "emu":
+            return self._emu.snapshot()
+        return super().snapshot()
 
     # === V0x: FUN_1060 (init) / FUN_10e8 (play) =========================
     def _init_v0x(self, subtune: int = 0) -> None:

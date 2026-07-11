@@ -34,14 +34,17 @@ pyjch reglog tune.sid tune.reglog --seconds 30
 
 - `read(src)` / `parse(bytes)` — read a `.sid`/`.prg` into a `Song` (V0x) or
   `NewPlayerModel` (wavetable family).
-- `JchPlayer(model)` — one `pysidtracker.MemPlayer` for both byte-exact driver
-  versions (V0x from a `Song`, V20 from a playable `NewPlayerModel`);
+- `JchPlayer(model)` — one `pysidtracker.MemPlayer` that plays every recovered
+  version byte-exactly: native pure-Python engines for V0x (from a `Song`) and
+  V20 (from a playable `NewPlayerModel`), and every other recovered version via
+  `pysidtracker.EmuPlayer` (the tune's own 6502 driver on py65);
   `.play_frame() -> list[(reg, val)]`, `.regs`, `.render_grid(nframes)`.
 - `iter_frames(model, max_frames)` — per-frame writes.
 - `render_grid(model, nframes) -> list[list[int]]` — forward-filled grid.
 - `register_writes_from_player` / `read_reglog` / `write_reglog` / `RegWrite`
   (the shared `pysidtracker` register-log surface).
-- `playable(model)` — the V20 soundness gate (returns `V20Bases` or `None`).
+- `playable(model)` — the native-V20-engine gate (returns `V20Bases`, or `None`
+  when the tune is instead played byte-exact via `EmuPlayer`).
 - Model: `Song` (with `orderlist_ptr` / `subpattern_ptr` resolution),
   `NewPlayerModel` (the wavetable-family reader result).
 - Errors: `JCHError`, `SidParseError`.

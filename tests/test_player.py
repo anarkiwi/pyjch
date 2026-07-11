@@ -1,6 +1,6 @@
 """Unit tests for the single :class:`~pyjch.player.JchPlayer`.
 
-One player hosts both byte-exact JCH driver versions, version-selected from the
+One player hosts every recovered JCH driver version, version-selected from the
 model type:
 
 * **V0x** from a :class:`~pyjch.model.Song`, exercised against a real cached
@@ -9,11 +9,13 @@ model type:
 * **V20** from a :class:`~pyjch.newplayer.NewPlayerModel`, exercised offline
   against the hand-authored synthetic image (:mod:`tests._synth_v20`), which is
   crafted to drive every engine path (fetch / commit / instrument-init /
-  portamento / vibrato / filter / patch / blit).
+  portamento / vibrato / filter / patch / blit);
+* every other recovered family build via :class:`~pysidtracker.EmuPlayer` (the
+  tune's own driver run on py65).
 
 These assert the shared :class:`~pysidtracker.MemPlayer` contract (grid shape,
 first-frame-all-registers, changed-only diffs, determinism) and the version
-dispatch / playability gate -- not byte-exactness.
+dispatch -- byte-exactness is validated in ``tests/test_oracle_hvsc.py``.
 """
 
 import pytest
@@ -112,8 +114,8 @@ def test_hard_restart_immediate_selected_per_build():
         b"\x9d\x81\x17",  # PW-program store
     ],
 )
-def test_non_v20_family_not_playable(idiom):
-    """A recovered family model missing a V20 idiom is gated out of playback."""
+def test_non_v20_family_falls_back_to_emulation(idiom):
+    """A recovered family model without the native V20 idioms plays via EmuPlayer."""
     image, _load = synth.build_image()
     buf = bytearray(image)
     pos = buf.index(idiom)
@@ -121,6 +123,5 @@ def test_non_v20_family_not_playable(idiom):
     header = bytearray(synth.build_psid()[:0x7C])
     model = reader.parse(bytes(header) + bytes(buf))
     assert isinstance(model, NewPlayerModel)
-    assert playable(model) is None
-    with pytest.raises(SidParseError):
-        JchPlayer(model)
+    assert playable(model) is None  # not the native V20 build
+    assert JchPlayer(model)._version == "emu"  # pylint: disable=protected-access
