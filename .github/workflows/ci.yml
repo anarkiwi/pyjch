@@ -37,13 +37,12 @@ jobs:
       - name: Fetch corpus tunes (HVSC mirror; cached)
         run: python scripts/fetch_tunes.py --corpus
       - name: pytest + coverage (> 85%)
-        # The real HVSC tunes are present (fetched + cached), so the corpus
-        # reader/extract/editor tests RUN (not skip), exercising the reader,
-        # model recovery and the V0x player for real; the V20 player is driven
-        # offline by the synthetic image. Oracle byte-exact tests run in the
-        # dedicated ``oracle`` job below.
-        env:
-          PYJCH_FETCH_CORPUS: "1"
+        # The real HVSC tunes are pre-fetched + cached above, so the corpus
+        # reader/extract/editor tests RUN (never skip), exercising the reader,
+        # model recovery and the V0x player for real; any tune not already cached
+        # is fetched on demand from the mirror. The V20 player is driven offline
+        # by the synthetic image. Oracle byte-exact tests run in the dedicated
+        # ``oracle`` job below.
         run: pytest --cov=pyjch --cov-report=term-missing --cov-fail-under=85
 
   oracle:
