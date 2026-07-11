@@ -12,10 +12,12 @@ detected rather than mis-parsed — container headers are not trusted.
 
 `parse` returns a byte-exact-replayable `Song` for the canonical V0x layout, a
 `NewPlayerModel` for the wider wavetable family (~2,000 HVSC tunes), and cleanly
-rejects the genuinely different players and packed/relocated rips. The V20
-two-column engine (largest HVSC bucket) is byte-exact via
-`pyjch.v20player.V20Player`. See [docs/versions.md](docs/versions.md) for the
-per-version HVSC census.
+rejects the genuinely different players and packed/relocated rips. A single
+`pyjch.player.JchPlayer` (a `pysidtracker.MemPlayer`) replays both byte-exact
+driver versions — the V0x routine and the V20 two-column engine (largest HVSC
+bucket) — version-selected from the model. Both are validated frame-for-frame
+against the `sidtrace` register oracle. See [docs/versions.md](docs/versions.md)
+for the per-version HVSC census.
 
 ## Install
 

@@ -1,106 +1,123 @@
-"""Byte-exact player validation against the SID register oracle.
+"""Unit tests for the single :class:`~pyjch.player.JchPlayer`.
 
-The JCH NewPlayer renders from its first play call, which is one leading
-SILENT call (a gate counter underflows, the opcode stream is parsed, no
-audible SID write is emitted) before the first audible call.  The oracle
-write-stream cannot see that silent call, so its frame 0 is the first
-audible call; the validator aligns by dropping up to a few leading silent
-interpreter frames, exactly like deplayroutine's validator.
+One player hosts both byte-exact JCH driver versions, version-selected from the
+model type:
+
+* **V0x** from a :class:`~pyjch.model.Song`, exercised against a real cached
+  reference tune (skipped offline; byte-exact validation is in
+  ``tests/test_oracle_hvsc.py``);
+* **V20** from a :class:`~pyjch.newplayer.NewPlayerModel`, exercised offline
+  against the hand-authored synthetic image (:mod:`tests._synth_v20`), which is
+  crafted to drive every engine path (fetch / commit / instrument-init /
+  portamento / vibrato / filter / patch / blit).
+
+These assert the shared :class:`~pysidtracker.MemPlayer` contract (grid shape,
+first-frame-all-registers, changed-only diffs, determinism) and the version
+dispatch / playability gate -- not byte-exactness.
 """
 
 import pytest
 
-from pyjch import reader
-from pyjch.player import Player, iter_frames, render_grid
+from pyjch import reader, reglog
+from pyjch.errors import SidParseError
+from pyjch.model import Song
+from pyjch.newplayer import NewPlayerModel
+from pyjch.player import JchPlayer, iter_frames, playable, render_grid
+
+from tests import _synth_v20 as synth
 
 NREG = 25
-PW_HI_REGS = {0x03, 0x0A, 0x11}
-MAX_LEAD = 4
 
 
-def _mask(row):
-    masked = row[:]
-    for reg in PW_HI_REGS:
-        masked[reg] &= 0x0F
-    return masked
+def _v20_model():
+    return reader.parse(synth.build_psid())
 
 
-def _aligned_residual(oracle, rendered):
-    """Return (ok, lead, divergence) aligning over leading silent frames."""
-    if not rendered:
-        return False, 0, (0, 0, -1, -1)
-    baseline = rendered[0]
-    best = None
-    for lead in range(MAX_LEAD + 1):
-        if lead and (lead > len(rendered) or rendered[lead - 1] != baseline):
-            break
-        div = None
-        for frame in range(len(oracle)):
-            row = _mask(rendered[lead + frame])
-            for reg in range(NREG):
-                if oracle[frame][reg] != row[reg]:
-                    div = (frame, reg, oracle[frame][reg], row[reg])
-                    break
-            if div:
-                break
-        if div is None:
-            return True, lead, None
-        if best is None:
-            best = div
-    return False, 0, best
+# --- version dispatch -------------------------------------------------------
+def test_v0x_model_selects_v0x(tune_path):
+    """A Song drives the V0x routine."""
+    player = JchPlayer(reader.read(tune_path))
+    assert player._version == "v0x"  # pylint: disable=protected-access
+    assert isinstance(reader.read(tune_path), Song)
 
 
-def test_byte_exact(tune_id, tune_path, oracle_grid):
-    """The player reproduces the oracle's per-frame registers byte-exact."""
-    oracle, source = oracle_grid
+def test_v20_model_selects_v20():
+    """A playable NewPlayerModel drives the V20 engine."""
+    model = _v20_model()
+    assert isinstance(model, NewPlayerModel)
+    assert playable(model) is not None
+    assert JchPlayer(model)._version == "v20"  # pylint: disable=protected-access
+
+
+def test_unknown_model_type_rejected():
+    with pytest.raises(SidParseError):
+        JchPlayer(object())
+
+
+# --- shared MemPlayer contract (both versions) ------------------------------
+@pytest.mark.parametrize("frames", [1, 50, 200])
+def test_v20_render_grid_shape_and_determinism(frames):
+    grid = render_grid(_v20_model(), frames)
+    assert len(grid) == frames
+    assert all(len(row) == NREG for row in grid)
+    assert grid == render_grid(_v20_model(), frames)
+
+
+def test_v20_first_frame_all_registers_then_changed_only():
+    frames = list(iter_frames(_v20_model(), max_frames=400))
+    assert len(frames) == 400
+    assert [reg for reg, _ in frames[0]] == list(range(NREG))
+    assert any(len(frame) < NREG for frame in frames[1:])
+    # a running tune keeps changing registers frame to frame
+    assert sum(len(frame) for frame in frames) > 400
+
+
+def test_v0x_render_grid_shape_and_determinism(tune_path):
     song = reader.read(tune_path)
-    rendered = render_grid(song, len(oracle) + MAX_LEAD)
-    ok, lead, div = _aligned_residual(oracle, rendered)
-    assert ok, (
-        f"{tune_id}: not byte-exact (oracle {source}); "
-        f"first divergence frame {div[0]} reg ${div[1]:02X} "
-        f"expected ${div[2]:02X} got ${div[3]:02X}"
-    )
-    assert lead <= MAX_LEAD
+    rows = render_grid(song, 64)
+    assert len(rows) == 64 and all(len(r) == NREG for r in rows)
+    assert render_grid(song, 64) == render_grid(song, 64)
 
 
-def test_first_frame_all_registers(tune_path):
-    """The first play_frame reports all 25 registers."""
-    song = reader.read(tune_path)
-    writes = Player(song).play_frame()
+def test_v0x_first_frame_all_registers(tune_path):
+    writes = JchPlayer(reader.read(tune_path)).play_frame()
     assert [reg for reg, _ in writes] == list(range(NREG))
 
 
-def test_iter_frames_changed_only(tune_path):
-    """After the first frame only changed registers are reported."""
-    song = reader.read(tune_path)
-    frames = list(iter_frames(song, max_frames=64))
-    assert len(frames) == 64
-    assert len(frames[0]) == NREG
-    assert any(len(frame) < NREG for frame in frames[1:])
+def test_v0x_loops_forever_until_max_frames(tune_path):
+    assert len(list(iter_frames(reader.read(tune_path), max_frames=500))) == 500
 
 
-def test_max_frames_required_for_termination(tune_path):
-    """The player loops forever; iter_frames stops only at max_frames."""
-    song = reader.read(tune_path)
-    assert len(list(iter_frames(song, max_frames=1000))) == 1000
+# --- playability gate -------------------------------------------------------
+def test_hard_restart_immediate_selected_per_build():
+    model = reader.parse(synth.build_psid(hard_restart=0x11))
+    assert playable(model).hardrestart == 0x11
+    assert JchPlayer(model)._version == "v20"  # pylint: disable=protected-access
 
 
-def test_render_grid_shape(tune_path):
-    """render_grid yields the requested number of 25-register rows."""
-    song = reader.read(tune_path)
-    rows = render_grid(song, 12)
-    assert len(rows) == 12
-    assert all(len(row) == NREG for row in rows)
+@pytest.mark.parametrize(
+    "idiom",
+    [
+        b"\x9d\x5d\x17",  # wave-ctrl store
+        b"\x8d\x46\x17",  # filter-program store
+        b"\x9d\x81\x17",  # PW-program store
+    ],
+)
+def test_non_v20_family_not_playable(idiom):
+    """A recovered family model missing a V20 idiom is gated out of playback."""
+    image, _load = synth.build_image()
+    buf = bytearray(image)
+    pos = buf.index(idiom)
+    buf[pos : pos + len(idiom)] = b"\xea" * len(idiom)
+    header = bytearray(synth.build_psid()[:0x7C])
+    model = reader.parse(bytes(header) + bytes(buf))
+    assert isinstance(model, NewPlayerModel)
+    assert playable(model) is None
+    with pytest.raises(SidParseError):
+        JchPlayer(model)
+    with pytest.raises(SidParseError):
+        reglog.make_player(model)
 
 
-def test_unknown_tune_skips_gracefully(tune_id):
-    """The fixture machinery yields a valid id for every parametrization."""
-    assert tune_id in ("flexible", "simple")
-
-
-@pytest.mark.parametrize("frames", [1, 50, 200])
-def test_render_is_deterministic(tune_path, frames):
-    """Two renders of the same song produce identical output."""
-    song = reader.read(tune_path)
-    assert render_grid(song, frames) == render_grid(song, frames)
+def test_make_player_returns_jchplayer():
+    assert isinstance(reglog.make_player(_v20_model()), JchPlayer)

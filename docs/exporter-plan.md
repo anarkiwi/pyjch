@@ -30,7 +30,7 @@ confirmed; the genuinely different forks (V19, Glover/Dane/DigiPlayer).
 ```
 reader.parse ─► NewPlayerModel ─┐
                                 ├─ extract.extract() ─► songmodel.Tune ─┬─ serialize (JSON/text)
-v20player.playable ─► V20Bases ─┘                                       └─ editor.write_editor_prg()
+player.playable    ─► V20Bases ─┘                                       └─ editor.write_editor_prg()
 ```
 
 - **`pyjch/songmodel.py`** — neutral dataclasses (JSON/`asdict`-friendly):

@@ -5,19 +5,18 @@
 pyjch reads JCH NewPlayer tunes at three levels:
 
 1. **Byte-exact V0x player** — the canonical **`JCH_NewPlayer_V0x`** layout.
-   `pyjch.reader.parse` returns a `Song`; `pyjch.player.Player` replays it
-   register-for-register, validated against the `preframr-sidtrace` oracle
-   (residual 0) for **Flexible** (Scorpio) and **Simple_Tune** (JCH).
+   `pyjch.reader.parse` returns a `Song`; `pyjch.player.JchPlayer` replays it
+   register-for-register, validated frame-for-frame against the `sidtrace` oracle for **Flexible** (Scorpio) and **Simple_Tune** (JCH).
 
 2. **Byte-exact V20 player** — the **`JCH_NewPlayer_V20`** two-column wavetable
    engine (the largest HVSC bucket), reverse-engineered in
    `re-trackers/JCH_NewPlayer/{jch-architecture.md,jch-generators.md,
    jch-player.asm}` against its reference tune
-   `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.v20player.V20Player` runs the full
+   `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.player.JchPlayer` runs the full
    64K-image play routine (groove tempo, two parallel wavetable columns, PW
    ping-pong, portamento, vibrato, global filter sweep, hard restart) and is
-   validated **frame-exact** against an independently generated py65 register
-   oracle. `pyjch.v20player.playable(model)` gates this tier: it discovers every
+   validated **frame-exact** against the `sidtrace` register
+   oracle. `pyjch.player.playable(model)` gates this tier: it discovers every
    V20 data table (subtune, wave note/ctrl columns, filter/PW programs,
    instruments, pattern pointers, command params, pitch table) plus the
    per-build hard-restart CTRL immediate and the fixed gate-off re-arm cells,
@@ -194,12 +193,13 @@ or `Song` for V0x).
 **Reader coverage: 2 → ~3,324 tunes** (2 V0x byte-exact + 3,322 family models).
 **Byte-exact playback: 2 V0x + 1,324 V20 = 1,326 tunes.**  Of the 1,737
 sidid-`V20` tunes, 1,324 are the byte-identical V20 code build that
-`pyjch.v20player.playable` accepts; the remainder are packed/relocated-code rips,
+`pyjch.player.playable` accepts; the remainder are packed/relocated-code rips,
 or rare sub-builds with a different instrument-record layout or a split wave-note
 column, which are gated out and kept at *model recovered; playback not
-byte-exact-verified* rather than mis-played.  The V0x player is validated
-frame-exact against `preframr-sidtrace`; the V20 player is validated frame-exact
-against a py65 oracle (`tests/_v20oracle.py`) over a **random ~300-tune sample**
+byte-exact-verified* rather than mis-played.  Both the V0x and V20 routines of
+the unified `pyjch.player.JchPlayer` are validated frame-exact against the
+shared `sidtrace` oracle (`tests/test_oracle_hvsc.py`), historically also over a
+**random ~300-tune sample**
 of the accepted set spanning many authors (100% frame-exact for the full sampled
 horizon, 120–600 frames).  Per-tune verification of every one of the 1,324 is not
 individually asserted — the guarantee is that `playable()` admits only the

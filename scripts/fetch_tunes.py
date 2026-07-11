@@ -73,7 +73,7 @@ def corpus_relpaths() -> list[str]:
             "REJECTED",
             "REJECTED_V0X_VARIANT",
         ),
-        "tests.test_v20player": ("V20_TUNES", "NON_V20_FAMILY"),
+        "tests.test_oracle_hvsc": ("TUNES",),
     }
     for name, attrs in modules.items():
         try:

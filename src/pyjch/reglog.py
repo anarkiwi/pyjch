@@ -1,11 +1,11 @@
-"""SID register write logs.
+"""SID register write logs -- the shared ``py*`` register-log surface.
 
-A register log is the player's output flattened to timed chip writes:
-one :class:`RegWrite` per SID register write, with an absolute clock in
-C64 CPU cycles.  Logs serialize to plain text, one ``clock reg val``
-triple per line (decimal, space separated, ``#`` comments allowed), so
-they load directly into pandas or any line-based tooling.  This is the
-mandatory validator surface deplayroutine's harness imports.
+A register log is the player's output flattened to timed chip writes: one
+:class:`RegWrite` per SID register write, with an absolute clock in C64 CPU
+cycles.  Logs serialize to plain text, one ``clock reg val`` triple per line.
+The framing (init baseline at clock 0, then per-frame diffs) is
+:func:`pysidtracker.reglog.register_writes_from_player`, driven by the pyjch
+:class:`~pyjch.player.JchPlayer`; this module only adds the pyjch entry points.
 """
 
 from typing import Iterator
@@ -18,11 +18,9 @@ from pysidtracker.reglog import (
     write_reglog,
 )
 
-from pyjch import constants, v20player
-from pyjch.errors import JCHError, SidParseError
-from pyjch.model import Song
-from pyjch.newplayer import NewPlayerModel
-from pyjch.player import Player
+from pyjch import constants
+from pyjch.errors import JCHError
+from pyjch.player import JchPlayer
 
 __all__ = [
     "DEFAULT_WRITE_SPACING",
@@ -34,48 +32,33 @@ __all__ = [
 ]
 
 
-def make_player(song):
-    """Return the byte-exact player for ``song``.
+def make_player(model) -> JchPlayer:
+    """Return the byte-exact :class:`~pyjch.player.JchPlayer` for ``model``.
 
-    A :class:`~pyjch.model.Song` (canonical V0x) uses :class:`~pyjch.player.Player`;
-    a :class:`~pyjch.newplayer.NewPlayerModel` that is a verified **V20** build
-    (see :func:`pyjch.v20player.playable`) uses :class:`~pyjch.v20player.V20Player`.
-    Any other recovered family model has no byte-exact player yet and raises.
+    A :class:`~pyjch.model.Song` drives the V0x routine; a
+    :class:`~pyjch.newplayer.NewPlayerModel` drives the V20 engine when it is a
+    verified V20 build.  Any other recovered family model has no byte-exact
+    player yet and raises :class:`~pyjch.errors.SidParseError`.
     """
-    if isinstance(song, NewPlayerModel):
-        if v20player.playable(song) is None:
-            raise SidParseError(
-                f"{song.version}: song model recovered, but byte-exact playback "
-                "is not supported for this JCH NewPlayer family version "
-                "(byte-exact players: V0x, V20)"
-            )
-        return v20player.V20Player(song)
-    return Player(song)
+    return JchPlayer(model)
 
 
 def iter_register_writes(
-    song: Song,
+    model,
     max_frames: int = 50 * 60,
     cycles_per_frame: int = constants.PAL_CYCLES_PER_FRAME,
     write_spacing: int = DEFAULT_WRITE_SPACING,
 ) -> Iterator[RegWrite]:
-    """Yield :class:`RegWrite` for ``song``, frame by frame.
+    """Yield :class:`RegWrite` for ``model``, frame by frame.
 
-    The write-stream mirrors how the player actually runs on a C64, so it
-    frames identically to the ``preframr-sidtrace`` oracle: the ``init``
-    routine's SID register baseline is emitted once at clock 0, then each
-    ``play`` call follows one frame later (a ``> cycles_per_frame`` gap, so
-    an oracle framer anchors frame 0 to the first play call and uses the
-    init writes as frame 0's baseline -- never mistaking a run of silent
-    play frames for the init gap).
-
-    The JCH player loops forever, so ``max_frames`` bounds the log
-    (default one minute at 50 Hz).  Writes within a frame are spaced
-    ``write_spacing`` cycles from the frame boundary; play frames are
-    ``cycles_per_frame`` apart.
+    The write-stream mirrors how the player runs on a C64, so it frames
+    identically to the sidtrace oracle: the ``init`` routine's SID register
+    baseline is emitted once at clock 0, then each ``play`` call follows one
+    frame later.  The JCH player loops forever, so ``max_frames`` bounds the log
+    (default one minute at 50 Hz).
     """
     if write_spacing * constants.SID_REGISTERS >= cycles_per_frame:
         raise JCHError("write_spacing too large for one frame")
     yield from register_writes_from_player(
-        make_player(song), max_frames, cycles_per_frame, write_spacing
+        make_player(model), max_frames, cycles_per_frame, write_spacing
     )
