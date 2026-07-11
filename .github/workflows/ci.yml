@@ -96,4 +96,7 @@ jobs:
         run: |
           pip install dist/*.whl
           python -c "import pyjch; print(pyjch.__version__)"
-          pyjch --help
+          # pyjch ships no binary; it registers a `jch` format with the shared
+          # `pysidtracker` CLI. Verify the entry point resolves and the CLI runs.
+          python -c "from pysidtracker import discover_formats; assert any(f.name == 'jch' for f in discover_formats()), 'jch format not registered'"
+          pysidtracker export --help
