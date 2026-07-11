@@ -1,11 +1,9 @@
 """Byte-exact comparison of the JchPlayer render against the sidtrace oracle.
 
-Marked ``oracle``: these tests need Docker (the ``anarkiwi/sidtrace`` image) and
-network access to HVSC, so the default suite excludes them (see ``pyproject``); a
-dedicated CI job runs ``pytest -m oracle``.  They are never skipped -- an
-unavailable tune or a failed oracle render fails the test rather than hiding a
-regression.  HVSC ``.sid`` files are copyright works: they are downloaded to a
-cache (or a local HVSC tree), never committed.
+Marked ``oracle`` (needs the Docker ``anarkiwi/sidtrace`` image + HVSC access);
+a dedicated CI job runs ``pytest -m oracle``.  Never skipped: an unavailable
+tune or a failed oracle render fails the test.  HVSC ``.sid`` files are
+copyright works -- cached or read from a local tree, never committed.
 
 Both byte-exact JCH driver versions are covered: **V0x** (a :class:`Song`) and
 **V20** (a :class:`NewPlayerModel`), each with real HVSC representatives.  The

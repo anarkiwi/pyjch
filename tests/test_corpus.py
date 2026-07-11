@@ -28,7 +28,14 @@ silent skip.  See ``docs/versions.md`` for the full per-version HVSC census.
 import pytest
 
 from pyjch import reader
-from pyjch.editor import NP25_PROFILE, _require_tables, np_profile, write_editor_prg
+from pyjch.editor import (
+    NP25_PROFILE,
+    _require_tables,
+    _split_long_patterns,
+    np_profile,
+    read_editor_prg,
+    write_editor_prg,
+)
 from pyjch.errors import SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
@@ -311,3 +318,31 @@ def test_pattern_split_roundtrip_real_tune(hvsc):
             for b in tune.pattern_raw[entry.pattern][:-1]
         ]
         assert [b for body in emitted for b in body] == original
+
+
+def test_editor_prg_roundtrip_real_tune(hvsc):
+    """Real SID -> editor ``.prg`` -> re-read recovers the same song structures.
+
+    Serializes a real V20 HVSC tune to the editor-native ``.prg``, then reads
+    the serialized image back through :func:`read_editor_prg` and asserts the
+    recovered order lists, sequences and every table match the original
+    extraction (post-split, as the writer emits it) byte-for-byte.  This closes
+    the SID -> serialize -> read-back -> matches-original loop on real data.
+    """
+    tune = _split_long_patterns(
+        extract(reader.parse(hvsc.read(MODEL_RECOVERED["V20"])))
+    )
+    profile = np_profile(25)
+    img = read_editor_prg(write_editor_prg(tune, profile=profile), profile=profile)
+    assert img.magic == profile.version_magic
+    assert img.tempo == tune.subtunes[0].tempo
+    assert img.order_lists == [list(o.raw) for o in tune.subtunes[0].order_lists]
+    assert img.sequences == [list(raw) for raw in tune.pattern_raw]
+    wt = tune.wavetable
+    assert img.table(profile.idx_wave, len(wt.note_col)) == wt.note_col
+    assert img.table(profile.idx_wave2, len(wt.ctrl_col)) == wt.ctrl_col
+    assert img.table(profile.idx_pitch, len(tune.pitch_table)) == tune.pitch_table
+    for index, inst in enumerate(tune.instruments):
+        assert img.table(profile.idx_inst, (index + 1) * 8)[index * 8 :] == (
+            list(inst.raw[:8])
+        )

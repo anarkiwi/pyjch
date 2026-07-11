@@ -217,7 +217,7 @@ class JchSidParser(BaseSidParser):
     song model this reader recovers statically as ``DIRECT`` and reports
     ``UNKNOWN`` for foreign players / unrecoverable versions.  ``DIRECT`` here
     means the song model is recovered directly from the loaded image; it does
-    not assert byte-exact replay of the family versions (only V0x is that).
+    not assert byte-exact replay of the family versions (only V0x and V20 are).
     """
 
     error_class: type = SidParseError
