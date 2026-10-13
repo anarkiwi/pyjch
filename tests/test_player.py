@@ -125,3 +125,12 @@ def test_non_v20_family_falls_back_to_emulation(idiom):
     assert isinstance(model, NewPlayerModel)
     assert playable(model) is None  # not the native V20 build
     assert JchPlayer(model).engine == "emu"
+
+
+def test_native_snapshot_masks_pulse_width_high():
+    """The native engines nibble-mask PW-hi in the grid, as EmuPlayer does."""
+    player = JchPlayer(_v20_model())
+    for reg in (0x03, 0x0A, 0x11):
+        player._wr(0xD400 + reg, 0xF0 | reg)  # pylint: disable=protected-access
+    regs = player.snapshot()
+    assert [regs[r] for r in (0x03, 0x0A, 0x11)] == [0x03, 0x0A, 0x01]

@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from pysidtracker import SID_BASE, EmuPlayer, MemPlayer, find_code_first
+from pysidtracker.registers import PW_HI_REGS
 
 from pyjch import constants
 from pyjch.errors import SidParseError
@@ -304,9 +305,13 @@ class JchPlayer(MemPlayer):
             self._emu._frame()
 
     def snapshot(self) -> List[int]:
+        """The SID register file, pulse-width highs nibble-masked as by EmuPlayer."""
         if self._version == "emu":
             return self._emu.snapshot()
-        return super().snapshot()
+        regs = super().snapshot()
+        for reg in PW_HI_REGS:
+            regs[reg] &= 0x0F
+        return regs
 
     # === V0x: FUN_1060 (init) / FUN_10e8 (play) =========================
     def _init_v0x(self, subtune: int = 0) -> None:
