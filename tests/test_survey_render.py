@@ -28,7 +28,7 @@ def test_render_matches_player():
         "engine": "v20",
         "version": "JCH_NewPlayer",
         "rsid": False,
-        "trigger": "pal_video",
+        "trigger": None,
         "speed": 1,
     }
 

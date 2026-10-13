@@ -23,7 +23,7 @@ def render(data, song, nframes):
         "engine": player.engine,
         "version": "V0x" if isinstance(model, Song) else model.version,
         "rsid": data[:4] == b"RSID",
-        "trigger": cadence.source.value,
+        "trigger": cadence.source and cadence.source.value,
         "speed": round(PAL_CYCLES_PER_FRAME / cadence.cycles_per_call),
     }
     return np.asarray(player.render_grid(nframes), np.int16), info
