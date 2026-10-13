@@ -73,7 +73,7 @@ def _base_image():
 
 def _recover(image=None, num_subtunes=1):
     return recover(
-        LOAD, INIT, PLAY, "n", "a", "r", image or _base_image(), b"", "T", num_subtunes
+        LOAD, INIT, PLAY, "n", "a", "r", image or _base_image(), b"", num_subtunes
     )
 
 
@@ -103,13 +103,13 @@ def test_iter_orderlist_walks_and_terminates():
 
 
 def test_discover_returns_bases():
-    bases = discover(LOAD, _base_image(), INIT, PLAY)
+    bases = discover(LOAD, _base_image(), INIT)
     assert bases["subtune_table"] == SUB
     assert bases["patternptr_lo"] == PLO
 
 
 def test_foreign_image_not_discovered():
-    assert discover(LOAD, bytes(0x200), INIT, PLAY) is None
+    assert discover(LOAD, bytes(0x200), INIT) is None
     with pytest.raises(SidParseError):
         _recover(image=bytes(0x200))
 
@@ -143,10 +143,56 @@ def test_pattern_index_out_of_range_rejected():
         _recover(image=bytes(buf))
 
 
-def test_second_subtune_out_of_range_rejected():
-    # Claim two subtunes but the table only holds one -> subtune 1 out of range.
+def test_header_song_count_is_cut_to_the_core_s_own():
+    # The header claims two songs; the table holds one, so the core has one.
+    assert _recover(num_subtunes=2).num_subtunes == 1
+
+
+def test_subtune_zero_must_be_a_song():
+    buf = bytearray(_base_image())
+    _put(buf, SUB, bytes([0x00, 0xFF]))
     with pytest.raises(SidParseError):
-        _recover(num_subtunes=2)
+        _recover(image=bytes(buf), num_subtunes=2)
+
+
+def _init_routine(shift, voices, tempo):
+    """A core init: ``ASL`` x shift ; TAY, the voice-pointer loop, the tempo read."""
+    loop = [0xA2, 0x00, 0xB9, SUB & 0xFF, SUB >> 8, 0x9D, 0x2E, 0x17]
+    loop += [0xC8, 0xC8, 0xE8, 0xE0, voices, 0xD0, 0xF3]
+    return bytes(
+        [0x0A] * shift + [0xA8] + loop + [0xB9, tempo & 0xFF, tempo >> 8, 0x8D]
+    )
+
+
+def _shaped_image(shift=3, voices=3, tempo=SUB):
+    buf = bytearray(_base_image() + bytes(0x10))
+    _put(buf, 0x1040, _init_routine(shift, voices, tempo))
+    return buf
+
+
+def test_core_shape_reads_the_subtune_record_off_init():
+    shape = newplayer.core_shape(LOAD, bytes(_shaped_image()), INIT)
+    assert shape == {"subtune_table": SUB, "voices": 3, "record": 8, "tempo_offset": 6}
+    four = newplayer.core_shape(LOAD, bytes(_shaped_image(4, 4, SUB + 6)), INIT)
+    assert (four["record"], four["voices"], four["tempo_offset"]) == (16, 4, 14)
+    assert newplayer.core_shape(LOAD, _base_image(), INIT) is None
+    assert newplayer.core_shape(LOAD, bytes(_shaped_image(voices=9)), INIT) is None
+
+
+def test_core_under_a_host_is_found_by_its_own_init():
+    """A host pair at the header entries; the core is the pair whose init reads songs."""
+    buf = _shaped_image()
+    host = 0x1200
+    _put(buf, host, b"\x4c\x06\x12\x4c\x06\x12\x20\x00\x10\x60")
+    image = bytes(buf)
+    end = LOAD + len(image)  # a core's code runs up to the next pair
+    assert newplayer.core_candidates(LOAD, image, host) == [(INIT, host), (host, end)]
+    model = recover(LOAD, host, host + 3, "n", "a", "r", image, b"")
+    assert (model.code_base, model.host, model.voices) == (INIT, "wrapper", 3)
+    assert recover(LOAD, INIT, PLAY, "n", "a", "r", image, b"").host == "psid"
+    assert recover(LOAD, host, host, "n", "a", "r", image, b"").host == "irq"
+    with pytest.raises(SidParseError):
+        recover(LOAD, host, host + 3, "n", "a", "r", image, b"", code_base=0x1100)
 
 
 def test_recognize_returns_anchor_then_none():
@@ -164,8 +210,8 @@ def test_classify_version_v20_prologue():
     )
     # play JMP target must point at the prologue for classify to read it.
     _put(buf, 0x1003, b"\x4c\xc1\x10")
-    assert classify_version(LOAD, bytes(buf), 0x10C1) == "V20"
-    assert classify_version(LOAD, _base_image(), PLAY) == "JCH_NewPlayer"
+    assert classify_version(LOAD, bytes(buf), INIT) == "V20"
+    assert classify_version(LOAD, _base_image(), INIT) == "JCH_NewPlayer"
 
 
 def test_classify_version_play_out_of_range():
@@ -194,7 +240,7 @@ def _v17_pitch_image():
 
 def test_v17_interleaved_pitch_idiom_recovered():
     """The V17 idiom recovers the pitch base when the ADC #$00 idiom is absent."""
-    bases = discover(LOAD, _v17_pitch_image(), INIT, PLAY)
+    bases = discover(LOAD, _v17_pitch_image(), INIT)
     assert bases["pitch_table"] == PITCH
 
 
@@ -202,7 +248,7 @@ def test_v17_pitch_idiom_rejects_non_ascending_table():
     """A matching read frame over a non-monotonic table is not accepted as pitch."""
     buf = bytearray(_v17_pitch_image())
     _put(buf, PITCH, bytes([0xFF, 0xFF, 0x00, 0x00]))  # breaks monotonicity at entry 0
-    bases = discover(LOAD, bytes(buf), INIT, PLAY)
+    bases = discover(LOAD, bytes(buf), INIT)
     assert "pitch_table" not in bases
 
 
@@ -239,7 +285,7 @@ def _interleaved_wave_image():
 
 def test_interleaved_wave_stream_discovered():
     """The V1/V2 idiom recovers the interleaved wave-stream base (no two-column)."""
-    bases = discover(LOAD, _interleaved_wave_image(), INIT, PLAY)
+    bases = discover(LOAD, _interleaved_wave_image(), INIT)
     assert bases["wave_stream"] == STREAM
     assert "wave_note_col" not in bases  # single stream, not two parallel columns
 
@@ -247,7 +293,7 @@ def test_interleaved_wave_stream_discovered():
 def test_interleaved_wave_absent_in_base_image():
     """A plain family image has no interleaved-wave stream."""
     assert newplayer._find_interleaved_wave(_base_image()) is None
-    assert "wave_stream" not in discover(LOAD, _base_image(), INIT, PLAY)
+    assert "wave_stream" not in discover(LOAD, _base_image(), INIT)
 
 
 def test_interleaved_wave_mismatched_cursor_rejected():

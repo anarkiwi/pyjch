@@ -24,14 +24,20 @@ from pysidtracker import (
     register_writes_from_player,
     write_reglog,
 )
+from pyjch.sid import DecompiledSid, JchInfo, V0xBuild, decompile_sid
+from pyjch.song import JchSong, decode, encode
 from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
+    "DecompiledSid",
     "EditorProfile",
     "JCHError",
+    "JchInfo",
+    "JchSong",
+    "V0xBuild",
     "JchPlayer",
     "JchSidParser",
     "NP20_PROFILE",
@@ -47,6 +53,9 @@ __all__ = [
     "Song",
     "Tune",
     "__version__",
+    "decode",
+    "decompile_sid",
+    "encode",
     "extract",
     "from_json",
     "iter_frames",

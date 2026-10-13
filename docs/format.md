@@ -20,7 +20,7 @@ the demoscene. `pyjch` reads it at three levels:
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
   (subtune/order-list/pattern/instrument tables) directly from the image. These
   versions also play byte-exactly: `JchPlayer` runs the tune's own 6502 driver
-  on py65 via `pysidtracker.EmuPlayer` (recovering the model and byte-exact
+  on jennings via `pysidtracker.EmuPlayer` (recovering the model and byte-exact
   playback are separate concerns).
 
 A few genuinely different players (V3/V4/V7/V19, `Glover_NewPlayer_V21`,
@@ -81,7 +81,7 @@ engines, the rest via `EmuPlayer`).
 Every recovered JCH NewPlayer version plays byte-exactly: V0x and V20 through
 their native pure-Python engines, and every other recovered family version
 (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) by running the tune's own 6502
-driver on py65 via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
+driver on jennings via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
 against the shared `pysidtracker` `sidtrace` register oracle — a patched
 `sidplayfp` run in Docker — over 60 seconds each, framed at the tune's own clock
 (`cycles_per_frame_for_flags`: PAL 19656 or NTSC 17095 cycles/frame,

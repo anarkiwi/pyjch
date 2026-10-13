@@ -31,6 +31,7 @@ class Song:
     """
 
     # pylint: disable=too-many-instance-attributes  # a full tune is wide
+    voices = 3
     load_addr: int = constants.DEFAULT_LOAD
     init_addr: int = constants.DEFAULT_INIT
     play_addr: int = constants.DEFAULT_PLAY

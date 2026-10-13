@@ -203,7 +203,7 @@ def _records(raw: List[int], cls):
 def _all_bases(model, fixed: List[Optional[int]], pat_idx: Set[int]) -> List[int]:
     bases = {b for b in fixed if b is not None}
     for subtune in range(model.num_subtunes):
-        for voice in range(3):
+        for voice in range(model.voices):
             ptr = model.orderlist_ptr(subtune, voice)
             if ptr is not None:
                 bases.add(ptr)
@@ -219,7 +219,7 @@ def _collect(model, cmdparam: Optional[int]):
     subtunes: List[Subtune] = []
     pat_idx: Set[int] = set()
     for subtune in range(model.num_subtunes):
-        lists = [_decode_orderlist(model, subtune, v) for v in range(3)]
+        lists = [_decode_orderlist(model, subtune, v) for v in range(model.voices)]
         for order in lists:
             pat_idx.update(e.pattern for e in order.entries)
         subtunes.append(Subtune(lists, tempo=model.subtune_tempo(subtune) or 0))

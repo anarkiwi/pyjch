@@ -11,7 +11,7 @@ model type:
   crafted to drive every engine path (fetch / commit / instrument-init /
   portamento / vibrato / filter / patch / blit);
 * every other recovered family build via :class:`~pysidtracker.EmuPlayer` (the
-  tune's own driver run on py65).
+  tune's own driver run on jennings).
 
 These assert the shared :class:`~pysidtracker.MemPlayer` contract (grid shape,
 first-frame-all-registers, changed-only diffs, determinism) and the version

@@ -33,13 +33,9 @@ from pyjch.model import Song
 
 
 def _parse_container(
-    data: bytes,
+    img: SidImage,
 ) -> Tuple[int, int, int, str, str, str, bytes, bytes, SidImage]:
     """Return (load, init, play, name, author, released, image, header, img)."""
-    try:
-        img = SidImage.from_bytes(data)
-    except _BaseSidParseError as exc:
-        raise SidParseError(str(exc)) from exc
     header = img.header
     load = img.load
     # Header init/play of 0 mean "same as load"; a bare .prg has no header, so
@@ -152,48 +148,53 @@ def parse(data: bytes):
 
     Returns a :class:`~pyjch.model.Song` for the canonical, byte-exact-replay
     ``JCH_NewPlayer_V0x`` layout, or a :class:`~pyjch.newplayer.NewPlayerModel`
-    for the later wavetable-family versions (V1/V2/V3/V6/V8/V9/V10/V11/V13/
-    V14/V15/V17/V18/V20) whose song DATA this reader recovers (byte-exact
-    playback is a separate concern -- native for V20, else via
-    :class:`~pysidtracker.EmuPlayer`; see :mod:`pyjch.newplayer`).
+    for the later wavetable-family versions whose song DATA this reader
+    recovers (byte-exact playback is a separate concern -- native for V20, else
+    via :class:`~pysidtracker.EmuPlayer`; see :mod:`pyjch.newplayer`).
 
     Raises :class:`~pyjch.errors.SidParseError` when the image is neither --
     rather than returning meaningless values out of a foreign player's code.
     """
-    load, init, play, name, author, released, image, header, img = _parse_container(
-        data
-    )
+    try:
+        img = SidImage.from_bytes(data)
+    except _BaseSidParseError as exc:
+        raise SidParseError(str(exc)) from exc
+    return parse_image(img)
+
+
+def parse_image(
+    img: SidImage, lo: Optional[int] = None, code_base: Optional[int] = None
+):
+    """Parse a loaded (or init-run) :class:`~pysidtracker.SidImage`.
+
+    ``lo`` is where the scanned memory starts (default: the load address); a
+    caller that ran the tune's init passes ``0`` so data the init moved below
+    the load address is in view.  ``code_base`` selects one core of an image
+    that carries several.
+    """
+    load, init, play, name, author, released, image, header, img = _parse_container(img)
+    if lo is not None:
+        load, image = lo, bytes(img.mem[lo : img.end])
     try:
         return _parse_v0x(load, init, play, name, author, released, image, header, img)
     except SidParseError as v0x_exc:
-        num_subtunes = _subtune_count(data)
         try:
             return newplayer.recover(
                 load,
                 init,
-                play,
+                play if img.header is None else img.header.play_address,
                 name,
                 author,
                 released,
                 image,
                 header,
-                version=newplayer.classify_version(load, image, play),
-                num_subtunes=num_subtunes,
+                num_subtunes=getattr(img.header, "songs", 1) or 1,
+                code_base=code_base,
             )
         except SidParseError as family_exc:
             raise SidParseError(
                 f"not a supported JCH NewPlayer tune: {v0x_exc}; {family_exc}"
             ) from family_exc
-
-
-def _subtune_count(data: bytes) -> int:
-    """Number of subtunes from the PSID/RSID header (1 for a bare .prg)."""
-    try:
-        img = SidImage.from_bytes(data)
-    except _BaseSidParseError:
-        return 1
-    header = img.header
-    return getattr(header, "songs", 1) or 1 if header is not None else 1
 
 
 def read(src):

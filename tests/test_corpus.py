@@ -14,7 +14,7 @@ pyjch reads two tiers of JCH NewPlayer tune:
   versions is validated separately in ``tests/test_oracle_hvsc.py``.
 
 A handful of genuinely different players (V3/V4/V5/V7/V12/V19, Glover's and
-Dane's forks, the DigiPlayer) use a different data layout the reader cannot
+Dane's forks) use a different data layout the reader cannot
 recover; they must be cleanly **rejected**, not mis-parsed.
 
 Tunes are HVSC copyright works, never committed.  Each tune is resolved from a
@@ -80,7 +80,6 @@ REJECTED = {
     "V19": "DEMOS/G-L/I2_Bass_Loop.sid",
     "Glover_NewPlayer_V21": "DEMOS/M-R/Mendelssohn.sid",
     "Dane_NewPlayer": "MUSICIANS/M/Mitch_and_Dane/Dane/Au_Revoir.sid",
-    "JCH_DigiPlayer": "MUSICIANS/J/JCH/Easy_Does_It.sid",
 }
 
 # Sidid-tagged V0x tunes that share the V0x init signature (so recognize()

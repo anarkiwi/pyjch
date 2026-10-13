@@ -5,7 +5,7 @@ plays byte-exactly (validated frame-for-frame against the sidtrace register
 oracle -- see ``tests/test_oracle_hvsc.py``).  Two of them run native
 pure-Python engines transcribed here; every other recovered version plays via
 :class:`~pysidtracker.EmuPlayer`, which runs the tune's own 6502 driver on
-py65.  The two native engines are:
+jennings.  The two native engines are:
 
 * **V0x** -- the canonical ``JCH_NewPlayer_V0x`` layout (init ``FUN_1060`` /
   play ``FUN_10e8``): per-voice opcode streams walked through the zero-page
@@ -146,6 +146,7 @@ class V20Bases:
     rearm_ad: int
     rearm_sr: int
     hardrestart: int
+    notes: int  # the stored tuning runs up to the core's first work cell
 
 
 def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
@@ -159,32 +160,38 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
     """
     if model.pitch_table is None or model.wave_note_col is None:
         return None
-    wave_ctrl = _op(image, "B9 {op:w} 9D 5D 17")  # LDA col,Y ; STA $175D,X
-    filterprog = _op(image, "B9 {op:w} 8D 46 17")  # LDA prog,Y ; STA $1746
-    pwnext = _op(image, "BC 81 17 B9 {op:w} 9D 81 17")  # PWProg_next
-    cmdparam = _op(image, "0A A8 B9 {op:w} 48")  # ASL;TAY;LDA param,Y;PHA
+    cb = model.code_base
+    code = image[cb - load : (model.code_end or load + len(image)) - load]
+
+    def cell(off: int) -> str:
+        return f"{(cb + off) & 0xFF:02X} {(cb + off) >> 8:02X}"
+
+    wave_ctrl = _op(code, f"B9 {{op:w}} 9D {cell(CTRLSH)}")  # LDA col,Y ; STA ctrlsh,X
+    filterprog = _op(code, f"B9 {{op:w}} 8D {cell(GRVCTR)}")  # LDA prog,Y ; STA grvctr
+    pwnext = _op(code, f"BC {cell(PWCUR)} B9 {{op:w}} 9D {cell(PWCUR)}")  # PWProg_next
+    cmdparam = _op(code, "0A A8 B9 {op:w} 48")  # ASL;TAY;LDA param,Y;PHA
     # The gate-off AD/SR re-arm reads two *fixed absolute* cells (LDA abs ; STA
     # $D405/$D406,Y) that only coincide with cmdparam in the reference build.
-    rearm_ad = _op(image, "AD {op:w} 99 05 D4")
-    rearm_sr = _op(image, "AD {op:w} 99 06 D4")
+    rearm_ad = _op(code, "AD {op:w} 99 05 D4")
+    rearm_sr = _op(code, "AD {op:w} 99 06 D4")
     if None in (wave_ctrl, filterprog, pwnext, cmdparam, rearm_ad, rearm_sr):
         return None
     # Instrument-record field offsets must match the reference build (AD+0,
     # SR+1, wave-flags+2, filter+3, filter-prog+4, PW-start+5); some V20-family
     # sub-builds pack instrument records differently -- reject those.
-    wave_field = _op(image, "B9 {op:w} 48 29 80")  # LDA inst+2,Y ; PHA ; AND #$80
-    filt_field = _op(image, "B9 {op:w} 48 29 F0")  # LDA inst+3,Y ; PHA ; AND #$F0
-    fprog_field = _op(image, "B9 {op:w} 8D 90 17")  # LDA inst+4,Y ; STA $1790
+    wave_field = _op(code, "B9 {op:w} 48 29 80")  # LDA inst+2,Y ; PHA ; AND #$80
+    filt_field = _op(code, "B9 {op:w} 48 29 F0")  # LDA inst+3,Y ; PHA ; AND #$F0
+    fprog_field = _op(code, f"B9 {{op:w}} 8D {cell(FLTCUR)}")  # LDA inst+4,Y
     instr = model.instruments
     if wave_field != instr + 2 or filt_field != instr + 3 or fprog_field != instr + 4:
         return None
     # The note-path and absolute-path wave-note reads (LDY $1795,X ; LDA col,Y)
     # must index the same column; a rare sub-build splits them -- reject it.
-    note_wave = _op(image, "BC 95 17 B9 {op:w} 30")  # freq_note wave read
+    note_wave = _op(code, f"BC {cell(WTPTR)} B9 {{op:w}} 30")  # freq_note wave read
     if note_wave != model.wave_note_col:
         return None
     # Hard-restart CTRL immediate: LDA #imm ; STA $D404,Y.
-    hr = find_code_first(image, "A9 {op} 99 04 D4")
+    hr = find_code_first(code, "A9 {op} 99 04 D4")
     hard = 0x09 if hr is None else hr.captures["op"]
     end = load + len(image)
     bases = V20Bases(
@@ -201,6 +208,7 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
         rearm_ad=rearm_ad,
         rearm_sr=rearm_sr,
         hardrestart=hard,
+        notes=(cb + VIBDELTALO - model.pitch_table) // 2,
     )
     for addr in (
         bases.pitch,
@@ -222,18 +230,15 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
 def playable(model) -> Optional[V20Bases]:
     """Return ``V20Bases`` if ``model`` is a byte-exact-replayable V20 tune.
 
-    Requires the code base (init) to be a ``JMP`` vector and every V20 idiom to
-    resolve in range.  This gates only the NATIVE V20 engine; ``None`` for any
-    other NewPlayer family build, which :class:`JchPlayer` then plays
-    byte-exactly via :class:`~pysidtracker.EmuPlayer` (the tune's own 6502
-    driver on py65) rather than a native transcription.
+    Requires the container entries to be the core's own vectors (no host routine
+    around it) and every V20 idiom to resolve in range.  This gates only the
+    NATIVE V20 engine; ``None`` for any other build or host, which
+    :class:`JchPlayer` then plays byte-exactly via
+    :class:`~pysidtracker.EmuPlayer` (the tune's own 6502 code on jennings).
     """
-    image = model.image
-    init = model.init_addr
-    off = init - model.load_addr
-    if not 0 <= off < len(image) - 2 or image[off] != 0x4C:
+    if not isinstance(model, NewPlayerModel) or model.host != "psid":
         return None
-    return discover_bases(model.load_addr, image, model)
+    return discover_bases(model.load_addr, model.image, model)
 
 
 class JchPlayer(MemPlayer):
@@ -242,7 +247,7 @@ class JchPlayer(MemPlayer):
     ``model`` is a :class:`~pyjch.model.Song` (drives the native pure-Python
     **V0x** routine) or a :class:`~pyjch.newplayer.NewPlayerModel` (drives the
     native **V20** engine when :func:`playable`).  Any other recovered family
-    build is played byte-exactly by running the tune's own 6502 driver on py65
+    build is played byte-exactly by running the tune's own 6502 driver on jennings
     via :class:`~pysidtracker.EmuPlayer` -- so every recovered JCH NewPlayer tune
     plays register-exact, whether or not its version has a native transcription.
     :meth:`play_frame` runs one tick, returning the SID register writes;
@@ -266,14 +271,16 @@ class JchPlayer(MemPlayer):
             if bases is not None:
                 self._version = "v20"
                 self.b = bases
-                self.cb = model.init_addr
+                self.cb = model.code_base
             else:
                 # Any other recovered family build: play it byte-exactly by
-                # running the tune's own 6502 driver on py65 (EmuPlayer), rather
+                # running the tune's own 6502 driver on jennings (EmuPlayer), rather
                 # than transcribing each version's playroutine by hand.
                 self._version = "emu"
                 self._emu_init = model.init_addr
-                self._emu_play = model.play_addr
+                self._emu_play = (
+                    model.code_base + 3 if model.host == "irq" else model.play_addr
+                )
             image, load = model.image, model.load_addr
         else:
             raise SidParseError(f"cannot play a {type(model).__name__}")

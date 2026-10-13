@@ -215,6 +215,8 @@ def _remap_order(order, expand: Dict[int, List[int]]):
 
 
 def _check_capacity(tune: Tune) -> None:
+    if any(len(sub.order_lists) != 3 for sub in tune.subtunes):
+        raise SidParseError("the editor format has three voices")
     if len(tune.instruments) > _MAX_INSTRUMENTS:
         raise SidParseError(f"too many instruments ({len(tune.instruments)} > 32)")
     if len(tune.subtunes) > _MAX_SUBTUNES:

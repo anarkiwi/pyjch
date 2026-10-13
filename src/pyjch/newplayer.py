@@ -9,7 +9,7 @@ disassembly is a ``JCH_NewPlayer_V20`` tune, the largest HVSC bucket).
 
 The V20 build of this family is replayed byte-exactly by the native engine in
 :mod:`~pyjch.player`; every other recovered version plays byte-exactly too, by
-running the tune's own 6502 driver on py65 via
+running the tune's own 6502 driver on jennings via
 :class:`~pysidtracker.EmuPlayer`.  This reader is a separate concern: it
 recovers the **song DATA**, which is laid out the same way across the whole
 family -- only relocated -- directly from the loaded image:
@@ -47,7 +47,6 @@ from pyjch.errors import SidParseError
 _ORD_STOP = 0xFE
 _ORD_LOOP = 0xFF
 
-_SUBTUNE_RECORD = 8  # bytes per subtune record {v0lo,hi,v1lo,hi,v2lo,hi,tempo,?}
 _MAX_ORDER_WALK = 512  # order-list length cap for the coherence walk
 
 
@@ -244,6 +243,22 @@ class NewPlayerModel:
     pwprog: Optional[int] = None
     image: bytes = b""
     container_header: bytes = b""
+    # The core's own ``JMP init ; JMP play`` pair, and the subtune record shape
+    # its init routine reads (see :func:`core_shape`).
+    code_base: int = 0
+    code_end: int = 0
+    voices: int = 3
+    record: int = 8
+    tempo_offset: int = 6
+
+    @property
+    def host(self) -> str:
+        """How the core is driven: ``psid`` when the container entries are the
+        core's own vectors, ``irq`` when the tune installs its own interrupt
+        (no play address), else ``wrapper`` (a host routine calls the core)."""
+        if (self.init_addr, self.play_addr) == (self.code_base, self.code_base + 3):
+            return "psid"
+        return "irq" if self.play_addr in (0, self.init_addr) else "wrapper"
 
     def _byte(self, abs_addr: int) -> Optional[int]:
         idx = abs_addr - self.load_addr
@@ -260,11 +275,13 @@ class NewPlayerModel:
 
     def orderlist_ptr(self, subtune: int, voice: int) -> Optional[int]:
         """Absolute address of ``voice``'s order list for ``subtune``."""
-        return self._word(self.subtune_table + subtune * _SUBTUNE_RECORD + voice * 2)
+        return self._word(self.subtune_table + subtune * self.record + voice * 2)
 
     def subtune_tempo(self, subtune: int) -> Optional[int]:
-        """The subtune's tempo/groove reload byte (record offset +6)."""
-        return self._byte(self.subtune_table + subtune * _SUBTUNE_RECORD + 6)
+        """The subtune's tempo/groove reload byte (after the voice pointers)."""
+        return self._byte(
+            self.subtune_table + subtune * self.record + self.tempo_offset
+        )
 
     def pattern_ptr(self, index: int) -> Optional[int]:
         """Absolute base address of pattern ``index``."""
@@ -314,44 +331,101 @@ class NewPlayerModel:
             indices.append(byte)
 
 
-def _entry_vectors_ok(load: int, image: bytes, init: int, play: int) -> bool:
-    """``init`` and ``play`` are ``JMP`` vectors into the image.
+def vector(load: int, image: bytes, addr: int) -> Optional[int]:
+    """Target of the ``JMP abs`` at ``addr`` when it lands inside the image."""
+    off = addr - load
+    if not 0 <= off < len(image) - 2 or image[off] != 0x4C:
+        return None
+    target = image[off + 1] | (image[off + 2] << 8)
+    return target if load <= target < load + len(image) else None
 
-    The family's entry points are a ``JMP init ; JMP play`` pair; the pair sits
-    at offset ``init - load`` (not necessarily image start -- e.g. tunes that
-    load at ``$0F00`` with ``init=$1000`` carry a leading block).
+
+def core_candidates(load: int, image: bytes, init: int) -> List[Tuple[int, int]]:
+    """Every ``JMP init ; JMP play`` pair that can be the NewPlayer core.
+
+    The core is the pair whose init routine reads the subtune record
+    (:func:`core_shape`), wherever it sits and whatever enters it -- the PSID
+    driver, a host routine around it, or an interrupt the tune installs.  Those
+    come first, then the header's own pair for a core of another shape.  Each
+    is paired with the end of its code: the next core, else the image end.
     """
     end = load + len(image)
-    for vec in (init, play):
-        off = vec - load
-        if not 0 <= off < len(image) - 2 or image[off] != 0x4C:
-            return False
-        target = image[off + 1] | (image[off + 2] << 8)
-        if not load <= target < end:
-            return False
-    return True
+    pairs = [
+        m.addr + load
+        for m in find_code_all(image, "4C ?? ?? 4C ?? ??")
+        if None
+        not in (
+            vector(load, image, m.addr + load),
+            vector(load, image, m.addr + load + 3),
+        )
+    ]
+    shaped = [cb for cb in pairs if core_shape(load, image, cb) is not None]
+    if init not in shaped and None not in (
+        vector(load, image, init),
+        vector(load, image, init + 3),
+    ):
+        shaped.append(init)
+    return [(cb, min([c for c in shaped if c > cb], default=end)) for cb in shaped]
 
 
-def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
+def core_shape(load: int, image: bytes, cb: int) -> Optional[dict]:
+    """The subtune record the core's init routine reads, from its own code.
+
+    Init scales the subtune number by ``ASL`` (one per record-size bit) and
+    copies the voices' order pointers in an ``X`` loop closed by ``CPX #voices``;
+    the tempo byte is the first ``LDA tbl,Y ; STA`` after it, read with ``Y``
+    already advanced past the pointers.
+    """
+    off = vector(load, image, cb) - load
+    shift = 0
+    while shift < 5 and image[off + shift] == 0x0A:
+        shift += 1
+    window = {"start": off, "end": off + 0x60}
+    sub = find_code_first(image, "A2 00 B9 {op:w} 9D", **window)
+    if image[off + shift] != 0xA8 or sub is None:
+        return None
+    loop = find_code_first(image, "E8 E0 {n} D0", start=sub.addr, end=window["end"])
+    if loop is None:
+        return None
+    tempo = find_code_first(image, "B9 {op:w} 8D", start=loop.addr, end=off + 0x60)
+    voices = loop.captures["n"]
+    if tempo is None or not 3 <= voices <= 4:
+        return None
+    return {
+        "subtune_table": sub.captures["op"],
+        "voices": voices,
+        "record": 1 << shift,
+        "tempo_offset": tempo.captures["op"] - sub.captures["op"] + 2 * voices,
+    }
+
+
+def discover(
+    load: int, image: bytes, cb: int, code_end: Optional[int] = None
+) -> Optional[dict]:
     """Discover the family table bases in ``image``, or ``None`` if absent.
 
-    Returns a dict of base addresses when the four *required* idioms (subtune
-    table, pattern-pointer low/high, instrument records) are all present and
-    in range; the optional wavetable/pitch bases are included when found.
+    ``cb`` is the core's ``JMP init ; JMP play`` pair and every idiom is read
+    from its own code, ``cb`` up to ``code_end`` (the next core in a
+    multi-core image, else the image end).  Returns a dict of base
+    addresses when the four *required* idioms (subtune table, pattern-pointer
+    low/high, instrument records) are all present and in range; the optional
+    wavetable/pitch bases are included when found.
     """
-    if not _entry_vectors_ok(load, image, init, play):
+    if None in (vector(load, image, cb), vector(load, image, cb + 3)):
         return None
     end = load + len(image)
+    code = image[cb - load : (code_end or end) - load]
+    shape = core_shape(load, image, cb) or {}
     bases = {
-        "subtune_table": _find_subtune_base(image),
-        "patternptr_lo": _op(image, "B9 {op:w} 85 FB"),  # LDA lo,Y ; STA $FB
-        "patternptr_hi": _op(image, "B9 {op:w} 85 FC"),  # LDA hi,Y ; STA $FC
-        "instruments": _find_instrument_base(image),
+        "subtune_table": shape.get("subtune_table", _find_subtune_base(code)),
+        "patternptr_lo": _op(code, "B9 {op:w} 85 FB"),  # LDA lo,Y ; STA $FB
+        "patternptr_hi": _op(code, "B9 {op:w} 85 FC"),  # LDA hi,Y ; STA $FC
+        "instruments": _find_instrument_base(code),
     }
     for addr in bases.values():
         if addr is None or not load <= addr < end:
             return None
-    note, ctrl = _find_wave_columns(image)
+    note, ctrl = _find_wave_columns(code)
     if (
         note is not None
         and ctrl is not None
@@ -361,17 +435,17 @@ def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
         bases["wave_note_col"] = note
         bases["wave_ctrl_col"] = ctrl
     else:
-        wave = _op(image, "B9 {op:w} C9 7E")  # LDA note,Y ; CMP #$7E (hold test)
+        wave = _op(code, "B9 {op:w} C9 7E")  # LDA note,Y ; CMP #$7E (hold test)
         if wave is not None and load <= wave < end:
             bases["wave_note_col"] = wave
-        stream = _find_interleaved_wave(image)
+        stream = _find_interleaved_wave(code)
         if stream is not None and load <= stream < end:
             bases["wave_stream"] = stream
-    pitch_hi = _op(image, "B9 {op:w} 69 00")  # LDA pitch+1,Y ; ADC #$00 (carry)
+    pitch_hi = _op(code, "B9 {op:w} 69 00")  # LDA pitch+1,Y ; ADC #$00 (carry)
     if pitch_hi is not None and load < pitch_hi < end:
         bases["pitch_table"] = pitch_hi - 1
     else:  # V17: interleaved read, no ADC-carry high byte
-        pitch = _find_pitch_lookup(image)
+        pitch = _find_pitch_lookup(code)
         if (
             pitch is not None
             and load <= pitch < end
@@ -379,16 +453,17 @@ def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
         ):
             bases["pitch_table"] = pitch
     for key, addr in (
-        ("cmdparam", _find_cmdparam(image)),
-        ("filterprog", _find_filterprog(image)),
-        ("pwprog", _find_pwprog(image)),
+        ("cmdparam", _find_cmdparam(code)),
+        ("filterprog", _find_filterprog(code)),
+        ("pwprog", _find_pwprog(code)),
     ):
         if addr is not None and load <= addr < end:
             bases[key] = addr
-    return bases
+    shape.pop("subtune_table", None)
+    return {**bases, **shape, "code_base": cb, "code_end": code_end or end}
 
 
-def recover(  # pylint: disable=too-many-arguments,too-many-locals
+def recover(  # pylint: disable=too-many-arguments
     load: int,
     init: int,
     play: int,
@@ -397,23 +472,38 @@ def recover(  # pylint: disable=too-many-arguments,too-many-locals
     released: str,
     image: bytes,
     header: bytes,
-    version: str = "JCH_NewPlayer",
     num_subtunes: int = 1,
+    code_base: Optional[int] = None,
 ) -> NewPlayerModel:
     """Recover a coherent :class:`NewPlayerModel`, or raise ``SidParseError``.
 
-    Discovers the family table bases and then validates the song is coherent:
-    every subtune's three order-list pointers are in range, and each subtune's
-    order lists walk to a terminator through in-range pattern pointers.  A
-    tune whose discovered bases do not form a coherent song is rejected rather
-    than returned as garbage.
+    Tries each :func:`core_candidates` pair: discovers the family table bases,
+    then validates the song is coherent -- every subtune's order-list pointers
+    are in range and each order list walks to a terminator through in-range
+    pattern pointers.  The first coherent candidate (or ``code_base``, when
+    given) is the model; a tune with none is rejected rather than returned as
+    garbage.
     """
-    bases = discover(load, image, init, play)
+    errors = []
+    meta = (load, init, play, name, author, released, image, header, num_subtunes)
+    for cb, code_end in core_candidates(load, image, init):
+        if code_base in (None, cb):
+            try:
+                return _coherent(*meta, cb, code_end)
+            except SidParseError as exc:
+                errors.append(f"${cb:04X}: {exc}")
+    raise SidParseError(
+        "not a recoverable JCH NewPlayer family layout: "
+        + ("; ".join(errors) or "no JMP init ; JMP play core vectors")
+    )
+
+
+def _coherent(  # pylint: disable=too-many-arguments
+    load, init, play, name, author, released, image, header, num_subtunes, cb, code_end
+) -> NewPlayerModel:
+    bases = discover(load, image, cb, code_end)
     if bases is None:
-        raise SidParseError(
-            "not a recoverable JCH NewPlayer family layout: "
-            "required table-discovery idioms absent or out of range"
-        )
+        raise SidParseError("required table-discovery idioms absent or out of range")
     model = NewPlayerModel(
         load_addr=load,
         init_addr=init,
@@ -421,22 +511,23 @@ def recover(  # pylint: disable=too-many-arguments,too-many-locals
         name=name,
         author=author,
         released=released,
-        version=version,
+        version=classify_version(load, image, cb),
         num_subtunes=max(1, num_subtunes),
         image=image,
         container_header=header,
         **bases,
     )
-    end = load + len(image)
     total_patterns = 0
     for subtune in range(model.num_subtunes):
-        ptrs = [model.orderlist_ptr(subtune, v) for v in range(3)]
-        if any(p is None or not load <= p < end for p in ptrs):
-            raise SidParseError(f"subtune {subtune} order-list pointers out of range")
-        if model.subtune_tempo(subtune) is None:
-            raise SidParseError(f"subtune {subtune} tempo byte out of range")
-        for voice in range(3):
-            total_patterns += len(model.iter_orderlist(subtune, voice))
+        try:
+            total_patterns += _subtune_patterns(model, subtune)
+        except SidParseError:
+            if subtune == 0:
+                raise
+            # the header's song count is not the core's: a multi-core image or
+            # songs the host plays otherwise; the core's own are the coherent prefix
+            model.num_subtunes = subtune
+            break
     if total_patterns == 0:
         raise SidParseError("no pattern references found: not a coherent song")
     if model.instrument(0) is None:
@@ -444,13 +535,24 @@ def recover(  # pylint: disable=too-many-arguments,too-many-locals
     return model
 
 
+def _subtune_patterns(model: NewPlayerModel, subtune: int) -> int:
+    """Pattern references of one subtune, or raise when its record is not a song."""
+    lo, hi = model.load_addr, model.load_addr + len(model.image)
+    ptrs = [model.orderlist_ptr(subtune, v) for v in range(model.voices)]
+    if any(p is None or not lo <= p < hi for p in ptrs):
+        raise SidParseError(f"subtune {subtune} order-list pointers out of range")
+    if model.subtune_tempo(subtune) is None:
+        raise SidParseError(f"subtune {subtune} tempo byte out of range")
+    return sum(len(model.iter_orderlist(subtune, v)) for v in range(model.voices))
+
+
 def recognize(load: int, image: bytes, init: int, play: int) -> Optional[int]:
     """Return the subtune-table anchor if ``image`` is a coherent family tune.
 
     A cheap gate for :meth:`~pyjch.reader.JchSidParser.recognize`: it runs the
-    full :func:`recover` coherence check (order lists terminate through in-range
-    pattern pointers) and returns the discovered subtune-table base, or ``None``
-    when the image is not a recoverable NewPlayer family layout.
+    full :func:`recover` coherence check and returns the discovered
+    subtune-table base, or ``None`` when the image is not a recoverable
+    NewPlayer family layout.
     """
     try:
         model = recover(load, init, play, "", "", "", image, b"")
@@ -471,6 +573,7 @@ _PROLOGUE_CLASSES: Tuple[Tuple[str, CodePattern], ...] = tuple(
     (tag, CodePattern(spec))
     for tag, spec in (
         ("V20", "A5 FB 48 A5 FC 48 CE ?? ?? 10 1D AD"),
+        ("V20", "CE ?? ?? 10 1D AD ?? ?? 8D ?? ?? C9 02 B0 13"),  # 4-track sample build
         ("V9-class", "A5 FB 48 A5 FC 48 A2 02 CE ?? ?? 10"),
         ("V13/V14-class", "A2 02 BD ?? ?? C9 02 D0 ?? BC ?? ??"),
         ("V11/V17-class", "A5 FB 48 A5 FC 48 A2 02 BD 06 10 D0"),
@@ -479,16 +582,17 @@ _PROLOGUE_CLASSES: Tuple[Tuple[str, CodePattern], ...] = tuple(
 )
 
 
-def classify_version(load: int, image: bytes, play: int) -> str:
+def classify_version(load: int, image: bytes, cb: int) -> str:
     """Best-effort prologue-class tag for ``image`` (else ``JCH_NewPlayer``).
 
-    Matches each masked prologue skeleton at the play routine (offset
-    ``play - load``); the tag is a play-prologue class, not an exact sidid
-    sub-version.
+    Matches each masked prologue skeleton at the core's play routine (the
+    target of the ``JMP play`` vector at ``cb + 3``); the tag is a play-prologue
+    class, not an exact sidid sub-version.
     """
-    play_off = play - load
-    if not 0 <= play_off < len(image):
+    target = vector(load, image, cb + 3)
+    if target is None:
         return "JCH_NewPlayer"
+    play_off = target - load
     for tag, pattern in _PROLOGUE_CLASSES:
         if find_code_first(
             image, pattern, start=play_off, end=play_off + pattern.length

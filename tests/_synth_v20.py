@@ -8,7 +8,7 @@ recovered model pass its coherence gate and the player run through fetch /
 commit / instrument-init / per-frame-engine / portamento / vibrato / filter /
 blit paths.  It is *not* an executable 6502 program (the code fragments exist
 only for the byte-pattern discovery), so it is validated structurally, not
-byte-exactly -- the byte-exact guarantee lives in the HVSC/py65 oracle tests.
+byte-exactly -- the byte-exact guarantee lives in the HVSC oracle tests.
 """
 
 import struct

@@ -42,7 +42,7 @@ def _describe(model) -> List[str]:
         lines.append(f"AD/SR:       ${model.init_ad:02X} / ${model.init_sr:02X}")
         lines.append(f"gate on/off: ${model.gate_ctrl:02X} / ${model.gateoff_ctrl:02X}")
         lines.append(f"subptr lo/hi:${model.subptr_lo:04X} / ${model.subptr_hi:04X}")
-    for voice in range(3):
+    for voice in range(model.voices):
         lines.append(
             f"  voice {voice}: orderlist @ ${model.orderlist_ptr(0, voice):04X}"
         )

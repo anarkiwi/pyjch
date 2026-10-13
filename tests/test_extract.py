@@ -24,9 +24,7 @@ def _tune() -> Tune:
 
 
 def _family_tune() -> Tune:
-    model = newplayer.recover(
-        LOAD, INIT, PLAY, "n", "a", "r", _base_image(), b"", "V14", 1
-    )
+    model = newplayer.recover(LOAD, INIT, PLAY, "n", "a", "r", _base_image(), b"", 1)
     return extract(model)
 
 
@@ -52,7 +50,7 @@ def test_interleaved_wave_family_notes_but_stays_export_blocked():
     on the ~16-byte instrument records and embedded limit-based PW/filter.
     """
     model = newplayer.recover(
-        LOAD, INIT, PLAY, "n", "a", "r", _interleaved_wave_image(), b"", "V1", 1
+        LOAD, INIT, PLAY, "n", "a", "r", _interleaved_wave_image(), b"", 1
     )
     assert model.wave_stream is not None
     tune = extract(model)

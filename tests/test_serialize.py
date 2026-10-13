@@ -15,9 +15,7 @@ def _tune():
 
 
 def _family_tune():
-    model = newplayer.recover(
-        LOAD, INIT, PLAY, "n", "a", "r", _base_image(), b"", "V14", 1
-    )
+    model = newplayer.recover(LOAD, INIT, PLAY, "n", "a", "r", _base_image(), b"", 1)
     return extract(model)
 
 
