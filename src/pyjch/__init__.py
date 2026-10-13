@@ -12,7 +12,7 @@ from pyjch.editor import (
     np_profile,
     write_editor_prg,
 )
-from pyjch.errors import JCHError, SidParseError
+from pyjch.errors import JCHError, JCHParseError, SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
@@ -32,6 +32,7 @@ __version__ = "0.4.0"
 __all__ = [
     "EditorProfile",
     "JCHError",
+    "JCHParseError",
     "JchPlayer",
     "JchSidParser",
     "NP20_PROFILE",

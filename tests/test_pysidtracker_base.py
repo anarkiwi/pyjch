@@ -5,7 +5,7 @@ import pytest
 import pysidtracker
 
 from pyjch import reader
-from pyjch.errors import JCHError, SidParseError
+from pyjch.errors import JCHError, JCHParseError, SidParseError
 from pyjch.reader import JchSidParser
 from tests.tunes import V0X_REFERENCES
 
@@ -15,6 +15,8 @@ def test_base_error_subclasses_sid_error():
     assert issubclass(JCHError, pysidtracker.SidError)
     assert issubclass(SidParseError, JCHError)
     assert issubclass(SidParseError, pysidtracker.SidError)
+    assert SidParseError is JCHParseError
+    assert issubclass(JCHParseError, pysidtracker.SidParseError)
 
 
 @pytest.mark.parametrize("relpath", V0X_REFERENCES)

@@ -280,6 +280,11 @@ class JchPlayer(MemPlayer):
         self._emu_image = image
         super().__init__(image, load, subtune)
 
+    @property
+    def engine(self) -> str:
+        """The playroutine in use: native ``v0x``/``v20``, or ``emu`` (EmuPlayer)."""
+        return self._version
+
     def _init(self, subtune: int) -> None:
         if self._version == "v0x":
             self._init_v0x(subtune)

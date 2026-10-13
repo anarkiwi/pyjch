@@ -162,9 +162,9 @@ def test_classify_version_v20_prologue():
         0x10C1,
         bytes([0xA5, 0xFB, 0x48, 0xA5, 0xFC, 0x48, 0xCE, 0x46, 0x17, 0x10, 0x1D, 0xAD]),
     )
-    # play JMP target must point at the prologue for classify to read it.
     _put(buf, 0x1003, b"\x4c\xc1\x10")
     assert classify_version(LOAD, bytes(buf), 0x10C1) == "V20"
+    assert classify_version(LOAD, bytes(buf), 0x1003) == "V20"
     assert classify_version(LOAD, _base_image(), PLAY) == "JCH_NewPlayer"
 
 

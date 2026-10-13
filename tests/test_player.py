@@ -42,7 +42,7 @@ def test_v0x_model_selects_v0x(relpath, hvsc):
     """A Song drives the V0x routine."""
     tune_path = hvsc(relpath)
     player = JchPlayer(reader.read(tune_path))
-    assert player._version == "v0x"  # pylint: disable=protected-access
+    assert player.engine == "v0x"
     assert isinstance(reader.read(tune_path), Song)
 
 
@@ -51,7 +51,7 @@ def test_v20_model_selects_v20():
     model = _v20_model()
     assert isinstance(model, NewPlayerModel)
     assert playable(model) is not None
-    assert JchPlayer(model)._version == "v20"  # pylint: disable=protected-access
+    assert JchPlayer(model).engine == "v20"
 
 
 def test_unknown_model_type_rejected():
@@ -103,7 +103,7 @@ def test_v0x_loops_forever_until_max_frames(relpath, hvsc):
 def test_hard_restart_immediate_selected_per_build():
     model = reader.parse(synth.build_psid(hard_restart=0x11))
     assert playable(model).hardrestart == 0x11
-    assert JchPlayer(model)._version == "v20"  # pylint: disable=protected-access
+    assert JchPlayer(model).engine == "v20"
 
 
 @pytest.mark.parametrize(
@@ -124,4 +124,4 @@ def test_non_v20_family_falls_back_to_emulation(idiom):
     model = reader.parse(bytes(header) + bytes(buf))
     assert isinstance(model, NewPlayerModel)
     assert playable(model) is None  # not the native V20 build
-    assert JchPlayer(model)._version == "emu"  # pylint: disable=protected-access
+    assert JchPlayer(model).engine == "emu"

@@ -101,12 +101,39 @@ subset:
 every other recovered version plays byte-exactly through `EmuPlayer`, so no
 tune is silently mis-played.
 
+## HVSC oracle survey
+
+[`scripts/oracle_hvsc.py`](../scripts/oracle_hvsc.py) plugs `JchPlayer` into the
+[`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
+whole-song comparison against the `sidtrace` oracle (Docker), over every subtune
+of every HVSC tune SIDId names `JCH_NewPlayer` or a `(JCH_NewPlayer_Vnn)`
+sub-version (`PLAYER`). The `-m oracle` test renders through the same function.
+Its `info` reports the decoded build: `engine` (`v0x`/`v20` native, or `emu`
+for `EmuPlayer`), `version` (`V0x`, or the family play-prologue class from
+`newplayer.classify_version`), `rsid`, and the play `trigger` and `speed`
+(calls per PAL frame). A tune neither reader recovers raises `JCHParseError` (a
+`pysidtracker.SidParseError`), which the survey records as `not_decompiled`.
+
+```bash
+pip install "pysidtracker[survey]>=0.11.3"
+python -m pysidtracker.survey find $HVSC --player '^\(?jch_newplayer(_v\w+)?\)?$' --out .hvsc-survey/tunes.csv
+PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
+    --work .hvsc-survey --render oracle_hvsc:render --jobs 24
+python -m pysidtracker.survey report .hvsc-survey/results.csv
+python -m pysidtracker.survey triage .hvsc-survey
+PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC .hvsc-survey/tunes.csv <md5>_<song> \
+    --work .hvsc-survey --render oracle_hvsc:render
+```
+
+`.hvsc-survey/` holds copyright-derived traces and is gitignored.
+
 ## References
 
 - [versions.md](versions.md) — full per-version HVSC census and support verdict.
 - [editor-format.md](editor-format.md) — the JCH-Editor NP22-25 native song
   layout (`pyjch.editor` export/re-read target: header pointer table, tables,
   encodings; sourced).
-- `sidtrace` byte-exact register oracle (`tests/test_oracle_hvsc.py`, `-m oracle`).
+- `sidtrace` byte-exact register oracle (`tests/test_oracle_hvsc.py`, `-m oracle`;
+  whole-HVSC survey above).
 - [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) — shared
   container/image/detection base.

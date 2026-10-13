@@ -1,4 +1,6 @@
-"""Byte-exact comparison of the JchPlayer render against the sidtrace oracle.
+"""Byte-exact comparison of the survey renderer against the sidtrace oracle.
+
+Renders through ``scripts/oracle_hvsc.py``, the same path as the HVSC survey.
 
 Marked ``oracle`` (needs the Docker ``anarkiwi/sidtrace`` image + HVSC access);
 a dedicated CI job runs ``pytest -m oracle``.  Never skipped: an unavailable
@@ -18,12 +20,10 @@ single-speed and the sidtrace auto-cadence over-estimates when a tune changes
 SID registers only every few frames.
 """
 
+import oracle_hvsc
 import pytest
 from pysidtracker import aligned_match, cycles_per_frame_for_flags
 from pysidtracker.image import SidImage
-
-from pyjch import reader
-from pyjch.player import JchPlayer
 
 # One+ HVSC representative per recovered JCH NewPlayer driver version, each
 # verified to render register-exact against the sidtrace oracle over 60 s.
@@ -63,5 +63,5 @@ def test_render_matches_oracle(relpath, hvsc, sidtrace_oracle):
     oracle = sidtrace_oracle(
         path, frames=None, seconds=SECONDS, cycles_per_frame=cycles
     )
-    rendered = JchPlayer(reader.parse(data)).render_grid(len(oracle) + 4)
+    rendered = oracle_hvsc.render(data, 1, len(oracle) + 4)[0].tolist()
     assert aligned_match(oracle, rendered, max_lead=4), f"{relpath}: render != oracle"

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TARGETS = ["src/pyjch", "tests"]
+TARGETS = ["src/pyjch", "tests", "scripts"]
 
 
 def test_black():
