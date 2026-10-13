@@ -482,11 +482,13 @@ _PROLOGUE_CLASSES: Tuple[Tuple[str, CodePattern], ...] = tuple(
 def classify_version(load: int, image: bytes, play: int) -> str:
     """Best-effort prologue-class tag for ``image`` (else ``JCH_NewPlayer``).
 
-    Matches each masked prologue skeleton at the play routine (offset
-    ``play - load``); the tag is a play-prologue class, not an exact sidid
-    sub-version.
+    Matches each masked prologue skeleton at the play routine, following a
+    ``JMP abs`` play vector; the tag is a play-prologue class, not an exact
+    sidid sub-version.
     """
     play_off = play - load
+    if 0 <= play_off < len(image) - 2 and image[play_off] == 0x4C:
+        play_off = image[play_off + 1] + (image[play_off + 2] << 8) - load
     if not 0 <= play_off < len(image):
         return "JCH_NewPlayer"
     for tag, pattern in _PROLOGUE_CLASSES:

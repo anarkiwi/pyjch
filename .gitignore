@@ -219,3 +219,4 @@ __marimo__/
 
 # HVSC test tunes (copyright) + sidtrace oracle CSV traces -- never committed.
 .tunecache/
+.hvsc-survey/

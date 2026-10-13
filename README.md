@@ -47,7 +47,8 @@ See [docs/usage.md](docs/usage.md) for the register grid, register logs, and the
 CLI, [docs/format.md](docs/format.md) for the format, players, and byte-exact
 validation, [docs/versions.md](docs/versions.md) for the HVSC census, and
 [docs/editor-format.md](docs/editor-format.md) for the JCH-Editor NP22-25 native
-song layout (the structural-export target).
+song layout (the structural-export target). The whole-HVSC oracle survey is in
+[docs/format.md](docs/format.md#hvsc-oracle-survey).
 
 ## Development
 
