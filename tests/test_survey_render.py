@@ -8,7 +8,7 @@ import oracle_hvsc
 import pytest
 
 import pysidtracker
-from pysidtracker.cadence import playroutine_cadence
+from pysidtracker.cadence import cadence_info
 from pysidtracker.sidid import sidid_signatures
 
 from pyjch import JCHParseError, JchPlayer, reader
@@ -30,6 +30,7 @@ def test_render_matches_player():
         "rsid": False,
         "trigger": None,
         "speed": 1,
+        "dynamic": False,
     }
 
 
@@ -46,17 +47,17 @@ def test_render_selects_one_based_subtune(monkeypatch):
         seen.append(("player", subtune))
         return JchPlayer(model)
 
-    def cadence(data, subtune):
-        seen.append(("cadence", subtune))
-        return playroutine_cadence(data, subtune=subtune)
+    def cadence(data, song):
+        seen.append(("cadence", song))
+        return cadence_info(data, song)
 
     monkeypatch.setattr(
         oracle_hvsc, "parse", lambda _: reader.parse(synth.build_psid())
     )
     monkeypatch.setattr(oracle_hvsc, "JchPlayer", player)
-    monkeypatch.setattr(oracle_hvsc, "playroutine_cadence", cadence)
+    monkeypatch.setattr(oracle_hvsc, "cadence_info", cadence)
     oracle_hvsc.render(synth.build_psid(songs=3), 3, 10)
-    assert sorted(seen) == [("cadence", 2), ("player", 2)]
+    assert sorted(seen) == [("cadence", 3), ("player", 2)]
 
 
 @pytest.mark.parametrize("data", [b"PSID", synth.build_psid()[:0x7C] + b"\x00" * 0x800])

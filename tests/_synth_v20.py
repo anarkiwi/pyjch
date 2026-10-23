@@ -11,7 +11,7 @@ only for the byte-pattern discovery), so it is validated structurally, not
 byte-exactly -- the byte-exact guarantee lives in the HVSC/py65 oracle tests.
 """
 
-import struct
+from pysidtracker.header import write_psid
 
 LOAD = 0x1000
 
@@ -126,21 +126,12 @@ def build_image(hard_restart=0x09):
 def build_psid(hard_restart=0x09, songs=1, start=1):
     """Wrap the synthetic image in a minimal PSID v2 container."""
     image, load = build_image(hard_restart)
-    header = bytearray(0x7C)
-    header[0:4] = b"PSID"
-    struct.pack_into(
-        ">HHHHHHH",
-        header,
-        4,
-        2,  # version
-        0x7C,  # data offset
-        load,  # load address
-        0x1000,  # init
-        0x1003,  # play
-        songs,
-        start,
+    return write_psid(
+        load=load,
+        init=0x1000,
+        play=0x1003,
+        image=image,
+        name="synth v20",
+        songs=songs,
+        start_song=start,
     )
-    struct.pack_into(">I", header, 0x12, 0)  # speed
-    name = b"synth v20"
-    header[0x16 : 0x16 + len(name)] = name  # name field (32 bytes)
-    return bytes(header) + image
