@@ -19,8 +19,8 @@ the demoscene. `pyjch` reads it at three levels:
   (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
   (subtune/order-list/pattern/instrument tables) directly from the image. These
-  versions also play byte-exactly: `JchPlayer` runs the tune's own 6502 driver
-  on py65 via `pysidtracker.EmuPlayer` (recovering the model and byte-exact
+  versions also play byte-exactly: `make_player` returns a
+  `pysidtracker.EmuPlayer` running the tune's own 6502 driver on jennings (recovering the model and byte-exact
   playback are separate concerns).
 
 A few genuinely different players (V3/V4/V7/V19, `Glover_NewPlayer_V21`,
@@ -70,7 +70,7 @@ inside a subpattern), and note bytes that index the frequency table.
 
 ## Player and playback notes
 
-`JchPlayer(model)` exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
+`make_player(model)` (a `JchPlayer` or an `EmuPlayer`) exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
 `iter_frames` / `render_grid` and `pysidtracker.register_writes_from_player`
 provide the shared `py*` register-log surface. The CLI `reglog` command emits
 byte-exact register logs for every recovered version (V0x/V20 from their native
@@ -81,7 +81,7 @@ engines, the rest via `EmuPlayer`).
 Every recovered JCH NewPlayer version plays byte-exactly: V0x and V20 through
 their native pure-Python engines, and every other recovered family version
 (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) by running the tune's own 6502
-driver on py65 via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
+driver on jennings via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
 against the shared `pysidtracker` `sidtrace` register oracle — a patched
 `sidplayfp` run in Docker — over 60 seconds each, framed at the tune's own clock
 (`cycles_per_frame_for_flags`: PAL 19656 or NTSC 17095 cycles/frame,
@@ -103,7 +103,7 @@ tune is silently mis-played.
 
 ## HVSC oracle survey
 
-[`scripts/oracle_hvsc.py`](../scripts/oracle_hvsc.py) plugs `JchPlayer` into the
+[`scripts/oracle_hvsc.py`](../scripts/oracle_hvsc.py) plugs `make_player` into the
 [`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
 whole-song comparison against the `sidtrace` oracle (Docker), over every subtune
 of every HVSC tune SIDId names `JCH_NewPlayer` or a `(JCH_NewPlayer_Vnn)`

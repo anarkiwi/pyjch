@@ -16,7 +16,7 @@ from pysidtracker import FormatCommand, SidFormat
 from pyjch.editor import np_profile, write_editor_prg
 from pyjch.extract import extract
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import JchPlayer, playable
+from pyjch.player import make_player, playable
 from pyjch.reader import JchSidParser, read
 from pyjch.serialize import to_json, to_text
 
@@ -81,7 +81,7 @@ def _export(args, fmt) -> None:  # pylint: disable=unused-argument
 FORMAT = SidFormat(
     name="jch",
     parser=JchSidParser(),
-    player=JchPlayer,
+    player=make_player,
     describe=_describe,
     commands=(
         FormatCommand(

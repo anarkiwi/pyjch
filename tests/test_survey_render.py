@@ -54,7 +54,7 @@ def test_render_selects_one_based_subtune(monkeypatch):
     monkeypatch.setattr(
         oracle_hvsc, "parse", lambda _: reader.parse(synth.build_psid())
     )
-    monkeypatch.setattr(oracle_hvsc, "JchPlayer", player)
+    monkeypatch.setattr(oracle_hvsc, "make_player", player)
     monkeypatch.setattr(oracle_hvsc, "cadence_info", cadence)
     oracle_hvsc.render(synth.build_psid(songs=3), 3, 10)
     assert sorted(seen) == [("cadence", 3), ("player", 2)]

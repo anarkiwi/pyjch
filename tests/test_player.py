@@ -11,7 +11,8 @@ model type:
   crafted to drive every engine path (fetch / commit / instrument-init /
   portamento / vibrato / filter / patch / blit);
 * every other recovered family build via :class:`~pysidtracker.EmuPlayer` (the
-  tune's own driver run on py65).
+  tune's own driver run on jennings), which :func:`~pyjch.player.make_player`
+  returns.
 
 These assert the shared :class:`~pysidtracker.MemPlayer` contract (grid shape,
 first-frame-all-registers, changed-only diffs, determinism) and the version
@@ -19,12 +20,20 @@ dispatch -- byte-exactness is validated in ``tests/test_oracle_hvsc.py``.
 """
 
 import pytest
+from pysidtracker import EmuPlayer
 
 from pyjch import reader
 from pyjch.errors import SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import JchPlayer, iter_frames, playable, render_grid
+from pyjch.player import (
+    JchPlayer,
+    engine_of,
+    iter_frames,
+    make_player,
+    playable,
+    render_grid,
+)
 
 from tests import _synth_v20 as synth
 from tests.tunes import V0X_REFERENCES
@@ -124,7 +133,22 @@ def test_non_v20_family_falls_back_to_emulation(idiom):
     model = reader.parse(bytes(header) + bytes(buf))
     assert isinstance(model, NewPlayerModel)
     assert playable(model) is None  # not the native V20 build
-    assert JchPlayer(model).engine == "emu"
+    player = make_player(model, subtune=1)
+    assert type(player) is EmuPlayer  # pylint: disable=unidiomatic-typecheck
+    assert engine_of(player) == "emu"
+    reference = EmuPlayer(
+        model.image, model.load_addr, model.init_addr, model.play_addr, 1
+    )
+    assert player.render_grid(8) == reference.render_grid(8)
+    with pytest.raises(SidParseError, match="no native engine"):
+        JchPlayer(model)
+
+
+def test_make_player_keeps_the_native_engines():
+    model = _v20_model()
+    player = make_player(model)
+    assert isinstance(player, JchPlayer)
+    assert engine_of(player) == player.engine == "v20"
 
 
 def test_native_snapshot_masks_pulse_width_high():

@@ -8,7 +8,7 @@ import numpy as np
 
 from pysidtracker.cadence import cadence_info
 
-from pyjch import JchPlayer, Song, parse
+from pyjch import Song, engine_of, make_player, parse
 
 PLAYER = r"^\(?jch_newplayer(_v\w+)?\)?$"
 
@@ -16,9 +16,9 @@ PLAYER = r"^\(?jch_newplayer(_v\w+)?\)?$"
 def render(data, song, nframes):
     """Render 1-based ``song`` of a JCH NewPlayer ``.sid`` and the build it decoded."""
     model = parse(data)
-    player = JchPlayer(model, subtune=song - 1)
+    player = make_player(model, subtune=song - 1)
     info = {
-        "engine": player.engine,
+        "engine": engine_of(player),
         "version": "V0x" if isinstance(model, Song) else model.version,
         **cadence_info(data, song),
     }

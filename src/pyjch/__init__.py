@@ -16,7 +16,14 @@ from pyjch.errors import JCHError, JCHParseError, SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import JchPlayer, iter_frames, playable, render_grid
+from pyjch.player import (
+    JchPlayer,
+    engine_of,
+    iter_frames,
+    make_player,
+    playable,
+    render_grid,
+)
 from pyjch.reader import JchSidParser, parse, read
 from pysidtracker import (
     RegWrite,
@@ -27,7 +34,7 @@ from pysidtracker import (
 from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "EditorProfile",
@@ -48,9 +55,11 @@ __all__ = [
     "Song",
     "Tune",
     "__version__",
+    "engine_of",
     "extract",
     "from_json",
     "iter_frames",
+    "make_player",
     "np_profile",
     "parse",
     "playable",
