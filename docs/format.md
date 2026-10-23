@@ -110,12 +110,12 @@ of every HVSC tune SIDId names `JCH_NewPlayer` or a `(JCH_NewPlayer_Vnn)`
 sub-version (`PLAYER`). The `-m oracle` test renders through the same function.
 Its `info` reports the decoded build: `engine` (`v0x`/`v20` native, or `emu`
 for `EmuPlayer`), `version` (`V0x`, or the family play-prologue class from
-`newplayer.classify_version`), `rsid`, and the play `trigger` and `speed`
-(calls per PAL frame). A tune neither reader recovers raises `JCHParseError` (a
+`newplayer.classify_version`), and `pysidtracker.cadence.cadence_info`'s
+`rsid`, play `trigger`, `speed` (calls per PAL frame) and `dynamic`. A tune neither reader recovers raises `JCHParseError` (a
 `pysidtracker.SidParseError`), which the survey records as `not_decompiled`.
 
 ```bash
-pip install "pysidtracker[survey]>=0.12.0"
+pip install "pysidtracker[survey]>=0.32.0"
 python -m pysidtracker.survey find $HVSC --player '^\(?jch_newplayer(_v\w+)?\)?$' --out .hvsc-survey/tunes.csv
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
     --work .hvsc-survey --render oracle_hvsc:render --jobs 24

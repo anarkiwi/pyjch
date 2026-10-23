@@ -6,12 +6,12 @@ pyjch ships no ``pyjch`` binary; it registers a ``jch`` :class:`SidFormat` on th
 """
 
 import json
-import struct
 
 import pytest
 
 from pysidtracker import SidError, discover_formats, read_reglog
 from pysidtracker import maincli
+from pysidtracker.header import write_psid
 
 from pyjch.cli_plugin import FORMAT
 from tests import _synth_v20 as synth
@@ -33,27 +33,15 @@ def _synth_sid(tmp_path):
 def _family_psid(tmp_path):
     """A PSID (init=$1000, play=$1003) wrapping a synthetic family image."""
     image = _base_image()
-    header = struct.pack(
-        ">4sHHHHHHHI32s32s32sHBBBB",
-        b"PSID",
-        2,
-        0x7C,
-        0,  # loadAddress 0 -> real load is first 2 image bytes
-        0x1000,
-        0x1003,
-        1,
-        1,
-        0,
-        b"synthetic",
-        b"pyjch",
-        b"2026",
-        0,
-        0,
-        0,
-        0,
-        0,
+    data = write_psid(
+        load=0,  # the real load is the first 2 image bytes
+        init=0x1000,
+        play=0x1003,
+        image=b"\x00\x10" + image,
+        name="synthetic",
+        author="pyjch",
+        released="2026",
     )
-    data = header + struct.pack("<H", 0x1000) + image
     dst = tmp_path / "family.sid"
     dst.write_bytes(data)
     return dst
@@ -99,8 +87,8 @@ def test_reglog(tmp_path, relpath, hvsc):
     assert read_reglog(dst)
 
 
-def test_error_on_missing_file(capsys):
-    assert _main(["info", "/nonexistent/tune.sid"]) == 1
+def test_error_on_missing_file(capsys, tmp_path):
+    assert _main(["info", str(tmp_path / "missing.sid")]) == 1
     assert "error:" in capsys.readouterr().err
 
 
