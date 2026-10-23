@@ -37,7 +37,7 @@ pyjch reads JCH NewPlayer tunes at three levels:
    the *model* and validates it is **coherent** (bases in range, order lists
    terminate through in-range pattern pointers, instrument records present),
    never garbage. Playback is a separate concern and is byte-exact:
-   `pyjch.player.JchPlayer` runs the tune's own 6502 driver on py65 via
+   `pyjch.player.make_player` runs the tune's own 6502 driver on jennings via
    `pysidtracker.EmuPlayer`.
 
 All tiers discover per-tune addresses by their surrounding player-code
@@ -55,7 +55,7 @@ NewPlayer versions were "genuinely different players" and rejected V1–V21
 gate handling and per-frame engine do differ between versions. For **V20** (the
 largest bucket) the opcode stream is now fully transcribed into a native engine;
 the other family versions play byte-exactly by running their own 6502 driver on
-py65 via `EmuPlayer`. Either way the **song data layout is the same across the
+jennings via `EmuPlayer`. Either way the **song data layout is the same across the
 whole wavetable family, only relocated**, and is recoverable directly from the
 loaded image. Independent byte analysis of representatives from every bucket confirms
 the same discovery idioms resolve to in-range, coherent tables:
@@ -195,7 +195,7 @@ or `Song` for V0x).
 **Reader coverage: 2 → ~3,324 tunes** (2 V0x byte-exact + 3,322 family models).
 **Byte-exact playback: every recovered tune** — V0x and the 1,324 V20 code-build
 tunes through native pure-Python engines, the rest via `EmuPlayer` (the tune's
-own 6502 driver on py65).  Of the 1,737 sidid-`V20` tunes, 1,324 are the
+own 6502 driver on jennings).  Of the 1,737 sidid-`V20` tunes, 1,324 are the
 byte-identical V20 code build that `pyjch.player.playable` accepts for the
 **native** V20 engine; the remainder are packed/relocated-code rips, or rare
 sub-builds with a different instrument-record layout or a split wave-note column,
@@ -217,7 +217,7 @@ V20's, so rather than a native transcription they play byte-exact via `EmuPlayer
 The V20 player is a faithful transcription of the reverse-engineered play
 routine (`re-trackers/JCH_NewPlayer/`), driving a 64K memory image exactly as
 the 6502 does.  It was checked **frame-exact** (all 25 registers `$D400..$D418`,
-every frame) against independently generated py65 grids over a random sample of
+every frame) against independently emulated 6502 grids over a random sample of
 ~300 V20-build tunes across many authors — 100% of the accepted tunes matched
 for the full sampled horizon (120–600 frames).  `playable()` is the soundness
 gate: it discovers every data table by idiom, confirms the instrument-record

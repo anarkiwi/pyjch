@@ -9,7 +9,7 @@ disassembly is a ``JCH_NewPlayer_V20`` tune, the largest HVSC bucket).
 
 The V20 build of this family is replayed byte-exactly by the native engine in
 :mod:`~pyjch.player`; every other recovered version plays byte-exactly too, by
-running the tune's own 6502 driver on py65 via
+running the tune's own 6502 driver on jennings via
 :class:`~pysidtracker.EmuPlayer`.  This reader is a separate concern: it
 recovers the **song DATA**, which is laid out the same way across the whole
 family -- only relocated -- directly from the loaded image:

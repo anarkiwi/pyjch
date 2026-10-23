@@ -3,9 +3,10 @@
 The JCH NewPlayer shipped in several driver versions.  Every recovered version
 plays byte-exactly (validated frame-for-frame against the sidtrace register
 oracle -- see ``tests/test_oracle_hvsc.py``).  Two of them run native
-pure-Python engines transcribed here; every other recovered version plays via
+pure-Python engines transcribed here; every other recovered version plays on
 :class:`~pysidtracker.EmuPlayer`, which runs the tune's own 6502 driver on
-py65.  The two native engines are:
+jennings.  :func:`make_player` picks the player for a model.  The two native
+engines are:
 
 * **V0x** -- the canonical ``JCH_NewPlayer_V0x`` layout (init ``FUN_1060`` /
   play ``FUN_10e8``): per-voice opcode streams walked through the zero-page
@@ -19,7 +20,7 @@ py65.  The two native engines are:
 
 Both are play-routine *variations* of one player, so a single
 :class:`~pysidtracker.MemPlayer` subclass -- :class:`JchPlayer` -- hosts them:
-the version is selected at construction from the model type, and each version's
+the engine is selected at construction from the model type, and each engine's
 init/frame logic lives in private ``*_v0x`` / ``*_v20`` methods.  All the shared
 machinery (64 KiB memory mount, ``_rd``/``_wr``, post-init snapshot, per-frame
 diffing, ``iter_frames``/``render_grid``) comes from :class:`MemPlayer`.
@@ -34,7 +35,6 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from pysidtracker import SID_BASE, EmuPlayer, MemPlayer, find_code_first
-from pysidtracker.registers import PW_HI_REGS
 
 from pyjch import constants
 from pyjch.errors import SidParseError
@@ -225,9 +225,9 @@ def playable(model) -> Optional[V20Bases]:
 
     Requires the code base (init) to be a ``JMP`` vector and every V20 idiom to
     resolve in range.  This gates only the NATIVE V20 engine; ``None`` for any
-    other NewPlayer family build, which :class:`JchPlayer` then plays
-    byte-exactly via :class:`~pysidtracker.EmuPlayer` (the tune's own 6502
-    driver on py65) rather than a native transcription.
+    other NewPlayer family build, which :func:`make_player` plays byte-exactly
+    on :class:`~pysidtracker.EmuPlayer` (the tune's own 6502 driver on
+    jennings) rather than a native transcription.
     """
     image = model.image
     init = model.init_addr
@@ -238,18 +238,18 @@ def playable(model) -> Optional[V20Bases]:
 
 
 class JchPlayer(MemPlayer):
-    """Play a JCH NewPlayer tune one frame at a time (V0x or V20).
+    """Play a JCH NewPlayer tune one frame at a time on a native engine.
 
-    ``model`` is a :class:`~pyjch.model.Song` (drives the native pure-Python
-    **V0x** routine) or a :class:`~pyjch.newplayer.NewPlayerModel` (drives the
-    native **V20** engine when :func:`playable`).  Any other recovered family
-    build is played byte-exactly by running the tune's own 6502 driver on py65
-    via :class:`~pysidtracker.EmuPlayer` -- so every recovered JCH NewPlayer tune
-    plays register-exact, whether or not its version has a native transcription.
-    :meth:`play_frame` runs one tick, returning the SID register writes;
-    :meth:`render_grid` (from :class:`MemPlayer`) yields the forward-filled
-    25-register per-frame grid.
+    ``model`` is a :class:`~pyjch.model.Song` (drives the pure-Python **V0x**
+    routine) or a :func:`playable` :class:`~pyjch.newplayer.NewPlayerModel`
+    (drives the **V20** engine); :func:`make_player` plays any other recovered
+    family build on :class:`~pysidtracker.EmuPlayer`.  :meth:`play_frame` runs
+    one tick, returning the SID register writes; :meth:`render_grid` (from
+    :class:`MemPlayer`) yields the forward-filled 25-register per-frame grid,
+    pulse-width highs nibble-masked as by ``EmuPlayer``.
     """
+
+    MASK_PW_HI = True
 
     # pylint: disable=too-many-instance-attributes  # full player machine state
     def __init__(self, model, subtune: int = 0):
@@ -261,57 +261,36 @@ class JchPlayer(MemPlayer):
             self._gateoff_ctrl = model.gateoff_ctrl
             self._subptr_lo = model.subptr_lo
             self._subptr_hi = model.subptr_hi
-            image, load = model.image, model.load_addr
         elif isinstance(model, NewPlayerModel):
             bases = playable(model)
-            if bases is not None:
-                self._version = "v20"
-                self.b = bases
-                self.cb = model.init_addr
-            else:
-                # Any other recovered family build: play it byte-exactly by
-                # running the tune's own 6502 driver on py65 (EmuPlayer), rather
-                # than transcribing each version's playroutine by hand.
-                self._version = "emu"
-                self._emu_init = model.init_addr
-                self._emu_play = model.play_addr
-            image, load = model.image, model.load_addr
+            if bases is None:
+                raise SidParseError(
+                    f"JCH NewPlayer {model.version} has no native engine; "
+                    "make_player plays it on EmuPlayer"
+                )
+            self._version = "v20"
+            self.b = bases
+            self.cb = model.init_addr
         else:
             raise SidParseError(f"cannot play a {type(model).__name__}")
-        self._emu_image = image
-        super().__init__(image, load, subtune)
+        super().__init__(model.image, model.load_addr, subtune)
 
     @property
     def engine(self) -> str:
-        """The playroutine in use: native ``v0x``/``v20``, or ``emu`` (EmuPlayer)."""
+        """The native playroutine in use: ``v0x`` or ``v20``."""
         return self._version
 
     def _init(self, subtune: int) -> None:
         if self._version == "v0x":
             self._init_v0x(subtune)
-        elif self._version == "v20":
-            self._init_v20(subtune)
         else:
-            self._emu = EmuPlayer(
-                self._emu_image, self._load, self._emu_init, self._emu_play, subtune
-            )
+            self._init_v20(subtune)
 
     def _frame(self) -> None:
         if self._version == "v0x":
             self._frame_v0x()
-        elif self._version == "v20":
-            self._frame_v20()
         else:
-            self._emu._frame()
-
-    def snapshot(self) -> List[int]:
-        """The SID register file, pulse-width highs nibble-masked as by EmuPlayer."""
-        if self._version == "emu":
-            return self._emu.snapshot()
-        regs = super().snapshot()
-        for reg in PW_HI_REGS:
-            regs[reg] &= 0x0F
-        return regs
+            self._frame_v20()
 
     # === V0x: FUN_1060 (init) / FUN_10e8 (play) =========================
     def _init_v0x(self, subtune: int = 0) -> None:
@@ -989,15 +968,34 @@ class JchPlayer(MemPlayer):
         self._wr(_D400 + 0x18, m[cb + FLTMODE] | m[cb + VOL])
 
 
+def make_player(model, subtune: int = 0) -> MemPlayer:
+    """The byte-exact player of ``model``'s ``subtune``.
+
+    A :class:`JchPlayer` for a V0x :class:`~pyjch.model.Song` or a
+    :func:`playable` V20 model; :class:`~pysidtracker.EmuPlayer` running the
+    tune's own driver for any other recovered NewPlayer family build.
+    """
+    if isinstance(model, NewPlayerModel) and playable(model) is None:
+        return EmuPlayer(
+            model.image, model.load_addr, model.init_addr, model.play_addr, subtune
+        )
+    return JchPlayer(model, subtune)
+
+
+def engine_of(player: MemPlayer) -> str:
+    """The playroutine ``player`` runs: native ``v0x``/``v20``, else ``emu``."""
+    return player.engine if isinstance(player, JchPlayer) else "emu"
+
+
 def iter_frames(model, max_frames: Optional[int] = None, subtune: int = 0):
     """Yield per-frame ``(reg, val)`` write lists for ``model``.
 
     Stops after ``max_frames`` frames (required for a non-looping render, since
     the JCH player loops forever).
     """
-    return JchPlayer(model, subtune).iter_frames(max_frames)
+    return make_player(model, subtune).iter_frames(max_frames)
 
 
 def render_grid(model, nframes: int, subtune: int = 0) -> List[List[int]]:
     """Render ``nframes`` of forward-filled per-frame register snapshots."""
-    return JchPlayer(model, subtune).render_grid(nframes)
+    return make_player(model, subtune).render_grid(nframes)

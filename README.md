@@ -12,14 +12,15 @@ detected rather than mis-parsed — container headers are not trusted.
 
 `parse` returns a `Song` for the canonical V0x layout, a `NewPlayerModel` for
 the wider wavetable family (~2,000 HVSC tunes), and cleanly rejects the
-genuinely different players and packed/relocated rips. A single
-`pyjch.player.JchPlayer` (a `pysidtracker.MemPlayer`) plays every recovered
-version byte-exactly: native pure-Python engines for the V0x routine and the V20
-two-column engine (largest HVSC bucket), and every other recovered family
-version (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) by running the tune's own
-6502 driver on py65 via `pysidtracker.EmuPlayer`. All are validated
-frame-for-frame against the `sidtrace` register oracle. See
-[docs/versions.md](docs/versions.md) for the per-version HVSC census.
+genuinely different players and packed/relocated rips.
+`pyjch.make_player(model)` returns a `pysidtracker.MemPlayer` that plays every
+recovered version byte-exactly: a `JchPlayer` (native pure-Python engines for
+the V0x routine and the V20 two-column engine, the largest HVSC bucket), or for
+every other recovered family version
+(V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) a `pysidtracker.EmuPlayer` running
+the tune's own 6502 driver on jennings. All are validated frame-for-frame
+against the `sidtrace` register oracle. See [docs/versions.md](docs/versions.md)
+for the per-version HVSC census.
 
 ## Install
 

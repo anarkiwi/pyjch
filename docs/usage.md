@@ -18,7 +18,7 @@ grid = pyjch.render_grid(song, nframes=400)
 
 # Register log (clock reg val triples).
 pyjch.write_reglog(
-    pyjch.register_writes_from_player(pyjch.JchPlayer(song), max_frames=2500),
+    pyjch.register_writes_from_player(pyjch.make_player(song), max_frames=2500),
     "tune.reglog",
 )
 ```
@@ -39,17 +39,20 @@ pysidtracker export tune.sid tune.prg --format editor-prg   # JCH-specific
 
 - `read(src)` / `parse(bytes)` — read a `.sid`/`.prg` into a `Song` (V0x) or
   `NewPlayerModel` (wavetable family).
-- `JchPlayer(model)` — one `pysidtracker.MemPlayer` that plays every recovered
-  version byte-exactly: native pure-Python engines for V0x (from a `Song`) and
-  V20 (from a playable `NewPlayerModel`), and every other recovered version via
-  `pysidtracker.EmuPlayer` (the tune's own 6502 driver on py65);
-  `.play_frame() -> list[(reg, val)]`, `.regs`, `.render_grid(nframes)`.
+- `make_player(model, subtune=0)` — the byte-exact `pysidtracker.MemPlayer` of
+  any recovered version: a `JchPlayer` for V0x (from a `Song`) and V20 (from a
+  playable `NewPlayerModel`), else a `pysidtracker.EmuPlayer` running the
+  tune's own 6502 driver on jennings; `.play_frame() -> list[(reg, val)]`,
+  `.regs`, `.render_grid(nframes)`. `engine_of(player)` names the playroutine
+  (`v0x` / `v20` / `emu`).
+- `JchPlayer(model)` — the native V0x / V20 engines (`.engine`); any other
+  version raises `SidParseError`.
 - `iter_frames(model, max_frames)` — per-frame writes.
 - `render_grid(model, nframes) -> list[list[int]]` — forward-filled grid.
 - `register_writes_from_player` / `read_reglog` / `write_reglog` / `RegWrite`
   (the shared `pysidtracker` register-log surface).
 - `playable(model)` — the native-V20-engine gate (returns `V20Bases`, or `None`
-  when the tune is instead played byte-exact via `EmuPlayer`).
+  when `make_player` instead plays the tune byte-exact on `EmuPlayer`).
 - Model: `Song` (with `orderlist_ptr` / `subpattern_ptr` resolution),
   `NewPlayerModel` (the wavetable-family reader result).
 - Errors: `JCHError`, `SidParseError`.

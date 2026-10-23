@@ -12,7 +12,7 @@ Every recovered JCH NewPlayer driver version is covered, at 60 seconds each:
 * **V0x** (a :class:`Song`) and **V20** (a :class:`NewPlayerModel`) render
   through their native pure-Python engines;
 * every other recovered family version renders through
-  :class:`~pysidtracker.EmuPlayer` -- the tune's own 6502 driver run on py65.
+  :class:`~pysidtracker.EmuPlayer` -- the tune's own 6502 driver run on jennings.
 
 Each tune is framed at its own clock (``cycles_per_frame_for_flags`` reads the
 PSID clock bits: most JCH tunes are PAL, a few NTSC), because the JCH player is
@@ -30,7 +30,7 @@ from pysidtracker.image import SidImage
 #   V0x        -> pyjch.model.Song native engine (FUN_1060/FUN_10e8)
 #   V20        -> pyjch.newplayer.NewPlayerModel native two-column engine
 #                 (24th_Amaranth_Grand_Prix_3 is the DRAX worktune V20 RE ref)
-#   V1..V18    -> EmuPlayer: the tune's own driver run on py65
+#   V1..V18    -> EmuPlayer: the tune's own driver run on jennings
 TUNES = {
     "v0x_flexible": "MUSICIANS/S/Scorpio/Flexible.sid",
     "v0x_simple_tune": "MUSICIANS/J/JCH/Simple_Tune.sid",
