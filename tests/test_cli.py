@@ -87,8 +87,8 @@ def test_reglog(tmp_path, relpath, hvsc):
     assert read_reglog(dst)
 
 
-def test_error_on_missing_file(capsys):
-    assert _main(["info", "/nonexistent/tune.sid"]) == 1
+def test_error_on_missing_file(capsys, tmp_path):
+    assert _main(["info", str(tmp_path / "missing.sid")]) == 1
     assert "error:" in capsys.readouterr().err
 
 
