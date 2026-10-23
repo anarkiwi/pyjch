@@ -115,7 +115,7 @@ for `EmuPlayer`), `version` (`V0x`, or the family play-prologue class from
 `pysidtracker.SidParseError`), which the survey records as `not_decompiled`.
 
 ```bash
-pip install "pysidtracker[survey]>=0.30.0"
+pip install "pysidtracker[survey]>=0.32.0"
 python -m pysidtracker.survey find $HVSC --player '^\(?jch_newplayer(_v\w+)?\)?$' --out .hvsc-survey/tunes.csv
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
     --work .hvsc-survey --render oracle_hvsc:render --jobs 24
