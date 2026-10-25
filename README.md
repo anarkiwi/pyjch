@@ -17,7 +17,7 @@ genuinely different players and packed/relocated rips.
 recovered version byte-exactly: a `JchPlayer` (native pure-Python engines for
 the V0x routine and the V20 two-column engine, the largest HVSC bucket), or for
 every other recovered family version
-(V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) a `pysidtracker.EmuPlayer` running
+(V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18) a `pysidtracker.EmuPlayer` running
 the tune's own 6502 driver on jennings. All are validated frame-for-frame
 against the `sidtrace` register oracle. See [docs/versions.md](docs/versions.md)
 for the per-version HVSC census.

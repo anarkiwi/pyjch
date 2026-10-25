@@ -153,7 +153,7 @@ def parse(data: bytes, subtune: int = 0):
 
     Returns a :class:`~pyjch.model.Song` for the canonical, byte-exact-replay
     ``JCH_NewPlayer_V0x`` layout, or a :class:`~pyjch.newplayer.NewPlayerModel`
-    for the later wavetable-family versions (V1/V2/V3/V6/V8/V9/V10/V11/V13/
+    for the later wavetable-family versions (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/
     V14/V15/V17/V18/V20) whose song DATA this reader recovers (byte-exact
     playback is a separate concern -- native for V20, else via
     :class:`~pysidtracker.EmuPlayer`; see :mod:`pyjch.newplayer`).

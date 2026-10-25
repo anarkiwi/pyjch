@@ -28,7 +28,7 @@ pyjch reads JCH NewPlayer tunes at three levels:
    that address, so relocated V20 builds match natively too.
 
 3. **Version-aware model reader** — the remaining JCH NewPlayer **wavetable
-   family** versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and the V20
+   family** versions (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18 and the V20
    sub-builds the V20 player does not accept). `parse` returns a
    `pyjch.newplayer.NewPlayerModel`: the recovered **song DATA** — subtune
    table, per-voice order lists, pattern-pointer tables, instrument records,
@@ -208,7 +208,7 @@ sample** of the native-accepted set spanning many authors (100% frame-exact for
 the full sampled horizon, 120–600 frames).  Per-tune verification of every one of
 the 1,324 is not individually asserted — the guarantee is that `playable()`
 admits only the byte-identical V20 build to the native engine.  The other family
-versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) are recovered by the shared
+versions (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18) are recovered by the shared
 idiom set plus a per-tune coherence gate; their player opcode streams differ from
 V20's, so rather than a native transcription they play byte-exact via `EmuPlayer`
 (also validated against the `sidtrace` oracle).
