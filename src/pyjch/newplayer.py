@@ -230,6 +230,8 @@ class NewPlayerModel:
     released: str = ""
     version: str = "JCH_NewPlayer"
     num_subtunes: int = 1
+    # The 0-based subtune this model plays by default (``parse(..., subtune=k)``).
+    subtune: int = 0
     # Discovered (relocated) table base addresses.
     subtune_table: int = 0
     patternptr_lo: int = 0

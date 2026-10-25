@@ -55,6 +55,8 @@ class Song:
     # The original container header (PSID/RSID bytes before the image), kept
     # for reference; empty for a bare ``.prg``.
     container_header: bytes = b""
+    # The 0-based subtune this model plays by default (``parse(..., subtune=k)``).
+    subtune: int = 0
 
     def orderlist_ptr(self, subtune: int, voice: int) -> int:
         """Absolute address of ``voice``'s orderlist for ``subtune``.

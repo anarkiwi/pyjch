@@ -968,13 +968,15 @@ class JchPlayer(MemPlayer):
         self._wr(_D400 + 0x18, m[cb + FLTMODE] | m[cb + VOL])
 
 
-def make_player(model, subtune: int = 0) -> MemPlayer:
-    """The byte-exact player of ``model``'s ``subtune``.
+def make_player(model, subtune: Optional[int] = None) -> MemPlayer:
+    """The byte-exact player of ``model``'s ``subtune`` (default: its own).
 
     A :class:`JchPlayer` for a V0x :class:`~pyjch.model.Song` or a
     :func:`playable` V20 model; :class:`~pysidtracker.EmuPlayer` running the
     tune's own driver for any other recovered NewPlayer family build.
     """
+    if subtune is None:
+        subtune = model.subtune
     if isinstance(model, NewPlayerModel) and playable(model) is None:
         return EmuPlayer(
             model.image, model.load_addr, model.init_addr, model.play_addr, subtune
@@ -987,7 +989,7 @@ def engine_of(player: MemPlayer) -> str:
     return player.engine if isinstance(player, JchPlayer) else "emu"
 
 
-def iter_frames(model, max_frames: Optional[int] = None, subtune: int = 0):
+def iter_frames(model, max_frames: Optional[int] = None, subtune: Optional[int] = None):
     """Yield per-frame ``(reg, val)`` write lists for ``model``.
 
     Stops after ``max_frames`` frames (required for a non-looping render, since
@@ -996,6 +998,6 @@ def iter_frames(model, max_frames: Optional[int] = None, subtune: int = 0):
     return make_player(model, subtune).iter_frames(max_frames)
 
 
-def render_grid(model, nframes: int, subtune: int = 0) -> List[List[int]]:
+def render_grid(model, nframes: int, subtune: Optional[int] = None) -> List[List[int]]:
     """Render ``nframes`` of forward-filled per-frame register snapshots."""
     return make_player(model, subtune).render_grid(nframes)
