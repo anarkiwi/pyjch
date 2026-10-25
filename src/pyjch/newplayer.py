@@ -473,8 +473,8 @@ _PROLOGUE_CLASSES: Tuple[Tuple[str, CodePattern], ...] = tuple(
         ("V20", "A5 FB 48 A5 FC 48 CE ?? ?? 10 1D AD"),
         ("V9-class", "A5 FB 48 A5 FC 48 A2 02 CE ?? ?? 10"),
         ("V13/V14-class", "A2 02 BD ?? ?? C9 02 D0 ?? BC ?? ??"),
-        ("V11/V17-class", "A5 FB 48 A5 FC 48 A2 02 BD 06 10 D0"),
-        ("V15/V18-class", "A2 02 A5 FB 48 A5 FC 48 BD 06 10"),
+        ("V11/V17-class", "A5 FB 48 A5 FC 48 A2 02 BD ?? ?? D0"),
+        ("V15/V18-class", "A2 02 A5 FB 48 A5 FC 48 BD ?? ??"),
     )
 )
 

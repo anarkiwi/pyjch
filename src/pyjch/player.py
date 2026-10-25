@@ -119,6 +119,11 @@ ADOVR = 0x7C5
 DELAYEN = 0x7CA
 
 
+def _abs(addr: int) -> str:
+    """``addr`` as a little-endian two-byte ``CodePattern`` operand."""
+    return f"{addr & 0xFF:02X} {addr >> 8 & 0xFF:02X}"
+
+
 def _op(image: bytes, spec: str) -> Optional[int]:
     """First ``{op}`` operand captured by ``spec`` in ``image``, or ``None``.
 
@@ -160,9 +165,15 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
     """
     if model.pitch_table is None or model.wave_note_col is None:
         return None
-    wave_ctrl = _op(image, "B9 {op:w} 9D 5D 17")  # LDA col,Y ; STA $175D,X
-    filterprog = _op(image, "B9 {op:w} 8D 46 17")  # LDA prog,Y ; STA $1746
-    pwnext = _op(image, "BC 81 17 B9 {op:w} 9D 81 17")  # PWProg_next
+    # Work-cell operands sit at fixed offsets from the code base (the init
+    # address), so the idioms are built per-tune and match relocated builds.
+    cb = model.init_addr
+    ctrlsh, grvctr, pwcur, fltcur, wtptr = (
+        _abs(cb + o) for o in (CTRLSH, GRVCTR, PWCUR, FLTCUR, WTPTR)
+    )
+    wave_ctrl = _op(image, f"B9 {{op:w}} 9D {ctrlsh}")  # LDA col,Y ; STA CTRLSH,X
+    filterprog = _op(image, f"B9 {{op:w}} 8D {grvctr}")  # LDA prog,Y ; STA GRVCTR
+    pwnext = _op(image, f"BC {pwcur} B9 {{op:w}} 9D {pwcur}")  # PWProg_next
     cmdparam = _op(image, "0A A8 B9 {op:w} 48")  # ASL;TAY;LDA param,Y;PHA
     # The gate-off AD/SR re-arm reads two *fixed absolute* cells (LDA abs ; STA
     # $D405/$D406,Y) that only coincide with cmdparam in the reference build.
@@ -175,13 +186,13 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
     # sub-builds pack instrument records differently -- reject those.
     wave_field = _op(image, "B9 {op:w} 48 29 80")  # LDA inst+2,Y ; PHA ; AND #$80
     filt_field = _op(image, "B9 {op:w} 48 29 F0")  # LDA inst+3,Y ; PHA ; AND #$F0
-    fprog_field = _op(image, "B9 {op:w} 8D 90 17")  # LDA inst+4,Y ; STA $1790
+    fprog_field = _op(image, f"B9 {{op:w}} 8D {fltcur}")  # LDA inst+4,Y ; STA FLTCUR
     instr = model.instruments
     if wave_field != instr + 2 or filt_field != instr + 3 or fprog_field != instr + 4:
         return None
     # The note-path and absolute-path wave-note reads (LDY $1795,X ; LDA col,Y)
     # must index the same column; a rare sub-build splits them -- reject it.
-    note_wave = _op(image, "BC 95 17 B9 {op:w} 30")  # freq_note wave read
+    note_wave = _op(image, f"BC {wtptr} B9 {{op:w}} 30")  # freq_note wave read
     if note_wave != model.wave_note_col:
         return None
     # Hard-restart CTRL immediate: LDA #imm ; STA $D404,Y.
