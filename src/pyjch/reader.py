@@ -21,6 +21,7 @@ discovers those idioms; when they are absent it raises -- it does not
 silently return garbage from a foreign player.  See ``docs/versions.md``.
 """
 
+from dataclasses import replace
 from typing import Any, Optional, Tuple
 
 from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
@@ -147,7 +148,7 @@ def _parse_v0x(  # pylint: disable=too-many-arguments
     )
 
 
-def parse(data: bytes):
+def parse(data: bytes, subtune: int = 0):
     """Parse a JCH NewPlayer tune (PSID/RSID/.sid or .prg) into its model.
 
     Returns a :class:`~pyjch.model.Song` for the canonical, byte-exact-replay
@@ -157,18 +158,28 @@ def parse(data: bytes):
     playback is a separate concern -- native for V20, else via
     :class:`~pysidtracker.EmuPlayer`; see :mod:`pyjch.newplayer`).
 
-    Raises :class:`~pyjch.errors.SidParseError` when the image is neither --
+    ``subtune`` is the 0-based subtune the model plays by default (see
+    :func:`~pyjch.player.make_player`); the whole subtune table is recovered
+    either way.
+
+    Raises :class:`~pyjch.errors.SidParseError` when the image is neither, or
+    ``subtune`` is outside the container's song count --
     rather than returning meaningless values out of a foreign player's code.
     """
+    num_subtunes = _subtune_count(data)
+    if not 0 <= subtune < num_subtunes:
+        raise SidParseError(
+            f"subtune {subtune} out of range (container has {num_subtunes})"
+        )
     load, init, play, name, author, released, image, header, img = _parse_container(
         data
     )
     try:
-        return _parse_v0x(load, init, play, name, author, released, image, header, img)
+        song = _parse_v0x(load, init, play, name, author, released, image, header, img)
+        return replace(song, subtune=subtune)
     except SidParseError as v0x_exc:
-        num_subtunes = _subtune_count(data)
         try:
-            return newplayer.recover(
+            model = newplayer.recover(
                 load,
                 init,
                 play,
@@ -180,6 +191,7 @@ def parse(data: bytes):
                 version=newplayer.classify_version(load, image, play),
                 num_subtunes=num_subtunes,
             )
+            return replace(model, subtune=subtune)
         except SidParseError as family_exc:
             raise SidParseError(
                 f"not a supported JCH NewPlayer tune: {v0x_exc}; {family_exc}"
@@ -224,9 +236,13 @@ class JchSidParser(BaseSidParser):
 
     error_class: type = SidParseError
 
-    def parse(self, data: bytes, **kwargs: Any):
-        """Decode raw ``.sid``/``.prg`` ``data`` into its recovered song model."""
-        return parse(data, **kwargs)
+    def parse(self, data: bytes, subtune: int = 0, **kwargs: Any):
+        """Decode raw ``.sid``/``.prg`` ``data`` into its recovered song model.
+
+        ``subtune`` is the 0-based subtune the model plays; any other keyword
+        is rejected with :class:`TypeError`, as :func:`parse` does.
+        """
+        return parse(data, subtune, **kwargs)
 
     def recognize(self, image: SidImage) -> Optional[object]:
         """Return a V0x or family anchor address in ``image``, else ``None``."""

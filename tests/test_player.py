@@ -158,3 +158,14 @@ def test_native_snapshot_masks_pulse_width_high():
         player._wr(0xD400 + reg, 0xF0 | reg)  # pylint: disable=protected-access
     regs = player.snapshot()
     assert [regs[r] for r in (0x03, 0x0A, 0x11)] == [0x03, 0x0A, 0x01]
+
+
+def test_parse_subtune_kwarg_selects_default_subtune():
+    """``parse(..., subtune=k)`` (the ``BaseSidParser.read`` contract) is honoured."""
+    data = synth.build_psid()
+    parser = reader.JchSidParser()
+    assert parser.read(data).subtune == 0
+    with pytest.raises(SidParseError):
+        parser.read(data, subtune=99)
+    with pytest.raises(TypeError):
+        parser.read(data, bogus=1)
