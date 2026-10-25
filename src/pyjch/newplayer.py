@@ -1,8 +1,8 @@
 """Version-aware reader for the JCH *NewPlayer wavetable family*.
 
-pyjch's byte-exact :mod:`~pyjch.player` models one specific routine (the
-canonical ``JCH_NewPlayer_V0x`` layout).  HVSC, however, holds thousands of
-tunes built by the *later* JCH NewPlayer engine -- the two-column wavetable
+pyjch's native :mod:`~pyjch.player` models two specific routines (the
+canonical ``JCH_NewPlayer_V0x`` layout and the V20 build).  HVSC, however,
+holds thousands of tunes built by the *later* JCH NewPlayer engine -- the two-column wavetable
 player fully reverse-engineered in
 ``re-trackers/JCH_NewPlayer/{jch-architecture.md,jch-player.asm}`` (that
 disassembly is a ``JCH_NewPlayer_V20`` tune, the largest HVSC bucket).
@@ -217,8 +217,8 @@ class NewPlayerModel:
     read out of.  ``version`` is the best-effort family tag (e.g. ``"V20"``)
     or ``"JCH_NewPlayer"`` when the exact sub-version is not fingerprinted.
 
-    This is the recovered *structure*; pyjch does not replay these versions
-    byte-exactly (see the module docstring).
+    This is the recovered *structure*; non-V20 versions replay byte-exactly via
+    :class:`~pysidtracker.EmuPlayer` (see the module docstring).
     """
 
     # pylint: disable=too-many-instance-attributes  # a full tune is wide

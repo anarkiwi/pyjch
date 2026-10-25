@@ -16,7 +16,7 @@ the demoscene. `pyjch` reads it at three levels:
   tunes that are the V20 code build, each validated frame-exact against the
   `sidtrace` register oracle. `pyjch.player.playable(model)` is the soundness gate.
 - **Model reader** — the remaining JCH NewPlayer *wavetable family*
-  (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
+  (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
   (subtune/order-list/pattern/instrument tables) directly from the image. These
   versions also play byte-exactly: `make_player` returns a
@@ -80,7 +80,7 @@ engines, the rest via `EmuPlayer`).
 
 Every recovered JCH NewPlayer version plays byte-exactly: V0x and V20 through
 their native pure-Python engines, and every other recovered family version
-(V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18) by running the tune's own 6502
+(V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18) by running the tune's own 6502
 driver on jennings via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
 against the shared `pysidtracker` `sidtrace` register oracle — a patched
 `sidplayfp` run in Docker — over 60 seconds each, framed at the tune's own clock
@@ -115,7 +115,7 @@ for `EmuPlayer`), `version` (`V0x`, or the family play-prologue class from
 `pysidtracker.SidParseError`), which the survey records as `not_decompiled`.
 
 ```bash
-pip install "pysidtracker[survey]>=0.32.0"
+pip install "pysidtracker[survey]>=0.35.0"
 python -m pysidtracker.survey find $HVSC --player '^\(?jch_newplayer(_v\w+)?\)?$' --out .hvsc-survey/tunes.csv
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
     --work .hvsc-survey --render oracle_hvsc:render --jobs 24

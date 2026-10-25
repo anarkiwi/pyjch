@@ -25,7 +25,7 @@ jobs:
         run: black --check src/pyjch tests scripts
       - name: pylint
         run: pylint src/pyjch tests scripts
-      - uses: anarkiwi/pysidtracker/.github/actions/cache@v0.32.0
+      - uses: anarkiwi/pysidtracker/.github/actions/cache@v0.35.0
         with:
           key: ${{ hashFiles('tests/**/*.py') }}
           tunes: tests
@@ -37,9 +37,9 @@ jobs:
 
   oracle:
     # Byte-exact comparison of the JchPlayer render against the sidtrace
-    # sidplayfp oracle over real HVSC tunes, for BOTH driver versions (V0x and
-    # V20). Never skipped: a failed HVSC download or oracle render fails the
-    # job.
+    # sidplayfp oracle over real HVSC tunes, for the V0x driver and every
+    # recovered family version (V1-V18, V20). Never skipped: a failed HVSC
+    # download or oracle render fails the job.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -51,7 +51,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - uses: anarkiwi/pysidtracker/.github/actions/cache@v0.32.0
+      - uses: anarkiwi/pysidtracker/.github/actions/cache@v0.35.0
         with:
           key: ${{ hashFiles('tests/test_oracle_hvsc.py') }}
           sidtrace: "true"
