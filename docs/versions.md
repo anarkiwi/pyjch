@@ -24,7 +24,8 @@ pyjch reads JCH NewPlayer tunes at three levels:
    returns byte bases only when the tune **is** the V20 code build. Data tables
    are packed at per-tune (variable) addresses, so every base is discovered by
    idiom; the player-code work cells are at fixed offsets from the code base
-   (the tune's init address).
+   (the tune's init address); the idioms embedding those cells are built from
+   that address, so relocated V20 builds match natively too.
 
 3. **Version-aware model reader** — the remaining JCH NewPlayer **wavetable
    family** versions (V1/V2/V6/V8/V9/V10/V11/V13/V14/V15/V17/V18 and the V20
