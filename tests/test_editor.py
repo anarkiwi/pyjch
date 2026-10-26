@@ -281,7 +281,7 @@ def test_multi_subtune_roundtrip():
             orders.append(dataclasses.replace(order, raw=raw))
         subs.append(dataclasses.replace(base, order_lists=orders))
     tune = dataclasses.replace(tune, subtunes=subs)
-    profile = editor.NP25_PROFILE
+    profile = editor.NP20_PROFILE
     img = editor.read_editor_prg(
         editor.write_editor_prg(tune, profile=profile), profile=profile
     )
