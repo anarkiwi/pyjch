@@ -16,16 +16,17 @@ from pysidtracker import FormatCommand, SidFormat
 from pyjch.editor import np_profile, write_editor_prg
 from pyjch.extract import extract
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import make_player, playable
+from pyjch.player import make_player
 from pyjch.reader import JchSidParser, read
 from pyjch.serialize import to_json, to_text
+from pyjch.variant import detect_variant, facet_sites
 
 
 def _describe(model) -> List[str]:
     """The JCH-specific ``info`` lines for a recovered ``model``."""
     lines: List[str] = []
     if isinstance(model, NewPlayerModel):
-        if playable(model) is not None:
+        if detect_variant(model)["engine"] == "v20":
             lines.append("player:      JCH NewPlayer V20 (byte-exact, native)")
         else:
             lines.append(
@@ -83,6 +84,8 @@ FORMAT = SidFormat(
     parser=JchSidParser(),
     player=make_player,
     describe=_describe,
+    variant=detect_variant,
+    facet_sites=facet_sites,
     commands=(
         FormatCommand(
             "export",

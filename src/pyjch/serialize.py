@@ -114,7 +114,11 @@ def from_json(text: str) -> Tune:
         pitch_table=data["pitch_table"],
         commands=[_command_row(c) for c in data["commands"]],
         provenance=Provenance(
-            prov["tier"], prov["version"], prov["bases"], prov["notes"]
+            prov["tier"],
+            prov["version"],
+            prov["bases"],
+            prov["notes"],
+            prov.get("variant", {}),
         ),
     )
 

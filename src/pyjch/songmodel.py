@@ -16,7 +16,7 @@ in the recovered player data.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 class NoteKind(str, Enum):
@@ -168,12 +168,17 @@ class Command:
 
 @dataclass
 class Provenance:
-    """Decode provenance: tier, family/version tag, bases, and honest notes."""
+    """Decode provenance: tier, family/version tag, bases, notes and the variant.
+
+    ``variant`` is the detected :class:`~pysidtracker.Variant` of the build,
+    flattened to facet values plus a ``<facet>.src`` source string each.
+    """
 
     tier: str
     version: str
     bases: Dict[str, int] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
+    variant: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

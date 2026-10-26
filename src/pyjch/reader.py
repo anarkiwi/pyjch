@@ -26,7 +26,9 @@ from typing import Any, Optional, Tuple
 
 from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
 from pysidtracker import SidParseError as _BaseSidParseError
-from pysidtracker import find_code_first, read_bytes, resolve_entry_points
+from pysidtracker import Strategy, find_code_first, locate, read_bytes
+from pysidtracker import resolve_entry_points
+from pysidtracker.locate import STATIC
 
 from pyjch import constants, newplayer
 from pyjch.errors import SidParseError
@@ -166,20 +168,26 @@ def parse(data: bytes, subtune: int = 0):
     ``subtune`` is outside the container's song count --
     rather than returning meaningless values out of a foreign player's code.
     """
-    num_subtunes = _subtune_count(data)
+    load, init, play, name, author, released, image, header, img = _parse_container(
+        data
+    )
+    num_subtunes = _subtune_count(img)
     if not 0 <= subtune < num_subtunes:
         raise SidParseError(
             f"subtune {subtune} out of range (container has {num_subtunes})"
         )
-    load, init, play, name, author, released, image, header, img = _parse_container(
-        data
-    )
-    try:
-        song = _parse_v0x(load, init, play, name, author, released, image, header, img)
-        return replace(song, subtune=subtune)
-    except SidParseError as v0x_exc:
-        try:
-            model = newplayer.recover(
+    strategies = (
+        Strategy(
+            "v0x",
+            STATIC,
+            lambda im, _: _parse_v0x(
+                load, init, play, name, author, released, image, header, im
+            ),
+        ),
+        Strategy(
+            "family",
+            STATIC,
+            lambda im, _: newplayer.recover(
                 load,
                 init,
                 play,
@@ -188,22 +196,19 @@ def parse(data: bytes, subtune: int = 0):
                 released,
                 image,
                 header,
-                version=newplayer.classify_version(load, image, play),
+                version=newplayer.classify_version(load, image, play, init),
                 num_subtunes=num_subtunes,
-            )
-            return replace(model, subtune=subtune)
-        except SidParseError as family_exc:
-            raise SidParseError(
-                f"not a supported JCH NewPlayer tune: {v0x_exc}; {family_exc}"
-            ) from family_exc
+            ),
+        ),
+    )
+    located = locate(img, strategies, init=False)
+    if not located.ok:
+        raise SidParseError(f"not a supported JCH NewPlayer tune: {located.describe()}")
+    return replace(located.layout, subtune=subtune)
 
 
-def _subtune_count(data: bytes) -> int:
+def _subtune_count(img: SidImage) -> int:
     """Number of subtunes from the PSID/RSID header (1 for a bare .prg)."""
-    try:
-        img = SidImage.from_bytes(data)
-    except _BaseSidParseError:
-        return 1
     header = img.header
     return getattr(header, "songs", 1) or 1 if header is not None else 1
 
@@ -217,7 +222,7 @@ def read(src):
 # attack/decay default into voices 0 and 1).  The SID register addresses are
 # load-independent, so this anchor survives relocation; empirically it is
 # present in every V0x tune and absent from the other NewPlayer versions.
-_RECOGNIZE_PAT = CodePattern("8D 05 D4 8D 0C D4")
+V0X_SIGNATURE = CodePattern("8D 05 D4 8D 0C D4")
 
 
 class JchSidParser(BaseSidParser):
@@ -246,10 +251,8 @@ class JchSidParser(BaseSidParser):
 
     def recognize(self, image: SidImage) -> Optional[object]:
         """Return a V0x or family anchor address in ``image``, else ``None``."""
-        match = find_code_first(image, _RECOGNIZE_PAT)
+        match = find_code_first(image, V0X_SIGNATURE)
         if match is not None:
             return match.addr
-        header = image.header
-        init = (header.init_address or image.load) if header else image.load
-        play = (header.play_address or image.load) if header else image.load
+        init, play = resolve_entry_points(image.header, image.load)
         return newplayer.recognize(image.load, image.image, init, play)

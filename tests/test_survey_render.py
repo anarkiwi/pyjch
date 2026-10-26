@@ -24,14 +24,17 @@ def test_render_matches_player():
     assert grid.dtype == np.int16
     np.testing.assert_array_equal(grid, JchPlayer(reader.parse(data)).render_grid(120))
     assert json.loads(json.dumps(info)) == info
-    assert info == {
+    assert {k: info[k] for k in ("engine", "version", "rsid", "trigger")} == {
         "engine": "v20",
         "version": "JCH_NewPlayer",
         "rsid": False,
         "trigger": None,
-        "speed": 1,
-        "dynamic": False,
     }
+    assert (info["speed"], info["dynamic"]) == (1, False)
+    # The build facets come from the detected variant, each with its source.
+    assert info["model"] == "family"
+    assert info["v20_gate"] == "reference"
+    assert info["engine.src"].startswith("inferred(")
 
 
 def test_render_v0x_reports_v0x(hvsc):
@@ -55,7 +58,7 @@ def test_render_selects_one_based_subtune(monkeypatch):
         oracle_hvsc, "parse", lambda _: reader.parse(synth.build_psid())
     )
     monkeypatch.setattr(oracle_hvsc, "make_player", player)
-    monkeypatch.setattr(oracle_hvsc, "cadence_info", cadence)
+    monkeypatch.setattr(pysidtracker.formats, "cadence_info", cadence)
     oracle_hvsc.render(synth.build_psid(songs=3), 3, 10)
     assert sorted(seen) == [("cadence", 3), ("player", 2)]
 
