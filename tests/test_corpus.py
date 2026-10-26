@@ -42,6 +42,7 @@ from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.reader import JchSidParser
 from pysidtracker import SidImage
+from tests._driver import NP25_BASES, make_driver
 from pysidtracker.detect import PlayroutineKind
 
 # The V0x layout the byte-exact player replays (proven against the oracle in
@@ -256,18 +257,20 @@ def test_family_table_discovery_matrix(version, hvsc):
         # never stamped as another version.
         for profile in (None, NP20_PROFILE):
             with pytest.raises(SidParseError):
-                write_editor_prg(tune, profile=profile)
+                write_editor_prg(tune, driver=DRIVER, profile=profile)
     elif cov["export"]:
-        prg = write_editor_prg(tune, profile=np_profile(20))
+        prg = write_editor_prg(tune, driver=DRIVER, profile=np_profile(20))
         assert prg[:2] == bytes([0x00, 0x0F])  # load at $0F00
         image = prg[2:]
-        base = NP20_PROFILE.base_wave_ctrl - NP20_PROFILE.load_addr
+        base = NP25_BASES["wave2"] - NP20_PROFILE.load_addr
         assert list(image[base : base + len(wt.ctrl_col)]) == wt.ctrl_col
     elif cov["gate"]:
         # Tables fully discovered but an editor format capacity limit blocks it.
         with pytest.raises(SidParseError):
-            write_editor_prg(tune, profile=np_profile(20))
+            write_editor_prg(tune, driver=DRIVER, profile=np_profile(20))
 
+
+DRIVER = make_driver()
 
 # A family tune with a sequence exceeding the 96-row cap: exercises the
 # lossless split in the editor writer end-to-end against real data.
@@ -313,7 +316,7 @@ def test_pattern_split_roundtrip_real_tune(hvsc):
         sum(1 for b in raw[:-1] if b < 0x80) > 96 for raw in tune.pattern_raw
     ), "representative no longer exercises the split"
     profile = np_profile(20)
-    prg = write_editor_prg(tune, profile=profile)
+    prg = write_editor_prg(tune, driver=DRIVER, profile=profile)
     for voice in range(3):
         emitted = _voice_sequences(prg, profile, voice)
         for body in emitted:
@@ -339,7 +342,8 @@ def test_editor_prg_roundtrip_real_tune(hvsc):
         extract(reader.parse(hvsc.read(MODEL_RECOVERED["V20"])))
     )
     profile = np_profile(20)
-    img = read_editor_prg(write_editor_prg(tune, profile=profile), profile=profile)
+    prg = write_editor_prg(tune, driver=DRIVER, profile=profile)
+    img = read_editor_prg(prg, profile=profile)
     assert img.magic == profile.version_magic
     assert img.tempo == tune.subtunes[0].tempo
     assert img.order_lists == [list(o.raw) for o in tune.subtunes[0].order_lists]

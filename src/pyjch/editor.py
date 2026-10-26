@@ -1,25 +1,23 @@
 """Write a recovered :class:`~pyjch.songmodel.Tune` as an editor-native ``.prg``.
 
-Implements the write-side spec in ``docs/editor-format.md``: inject a
+Implements the write-side spec in ``docs/editor-format.md``: take a
 caller-supplied stock player-code prefix (``driver`` -- never embedded here, per
-the no-copyrighted-material rule), lay the recovered tables at the profile's
-canonical page-aligned data-region bases, encode them, write the ``$0FA0``
-header pointer block + 5-char version magic + default tempo, and emit a
-2-byte-load ``.prg`` at ``$0F00``.
+the no-copyrighted-material rule; the file's own bytes from ``$0F00`` up to its
+first table), read every table base from the driver's own ``$0FA0`` pointer
+block (the player code addresses the tables with absolute operands, so they must
+stay where the driver expects them -- NP20/21/24 differ from NP22/23/25),
+check each table fits before the next base, encode the recovered tables there,
+write the init-data block at the driver's ``ptr[3]`` (three order-list words,
+tempo at ``+6``) and the 5-char version magic, and emit a 2-byte-load ``.prg``
+at ``$0F00``.
 
-One :class:`EditorProfile` carries the layout; NP20-25 share it byte-for-byte
-(verified against the four NP22-25 songs on the release ``.d64``) and differ
-only in the ``$0FEE`` version magic.  The packer does **not** re-encode musical
-data (see ``docs/editor-format.md`` *Packer transform*): sequences, order lists,
-instruments, wave/pulse/filter/command and pitch tables are byte-identical
-between packed and editor forms.  So export copies the recovered bytes
-**verbatim** into the page-aligned editor layout and rebuilds only the structure
-around them: the ``$0FA0`` pointer array, the sequence lo/hi pointer tables, the
-``$0FEE`` magic and the default tempo.  No sequence re-encoding, no order
-transpose-baseline synthesis.
-
-The default empty ``driver`` yields a zero-filled player region: structurally
-valid (correct pointer block / tables), but not runnable without a stock driver.
+The packer does **not** re-encode musical data (see ``docs/editor-format.md``
+*Packer transform*): sequences, order lists, instruments, wave/pulse/filter/
+command and pitch tables are byte-identical between packed and editor forms.
+So export copies the recovered bytes **verbatim** into the driver's layout and
+rebuilds only the sequence lo/hi pointer tables, the init-data block and the
+default tempo.  Nothing is written below the first table base, and an empty
+driver raises: bases are never invented.
 
 :func:`read_editor_prg` inverts the writer: it recovers the song structures
 from an emitted image via the ``$0FA0`` pointer block, so an export round-trips
@@ -44,12 +42,12 @@ _MARKS = (0xFE, 0xFF)
 
 @dataclass(frozen=True)
 class EditorProfile:
-    """Editor ``.prg`` layout: version magic, ``$0FA0`` index map, table bases.
+    """Editor ``.prg`` layout: version magic and ``$0FA0`` index map.
 
-    Every field but ``version_magic`` is shared across NP20-25 (verified from
-    the release ``.d64``).  ``$0FA0`` pointer address for index ``i`` is
-    ``ptr_base + i*2``; table bases are 256-byte aligned, order lists spaced by
-    ``order_stride`` (``$400``), wave col 2 == wave col 1 ``+ 256``.
+    Every field but ``version_magic`` is shared across NP20-25.  ``$0FA0``
+    pointer address for index ``i`` is ``ptr_base + i*2``; order lists are
+    spaced by ``order_stride`` (``$400``).  Table *bases* are not part of the
+    profile: they differ per driver build and are read from the driver.
     """
 
     version_magic: bytes
@@ -72,20 +70,6 @@ class EditorProfile:
     idx_seqlo: int = 0x16
     idx_seqhi: int = 0x17
     idx_cmd: int = 0x18
-    # Canonical page-aligned data-region bases.
-    base_init_data: int = 0x0F00
-    base_pitch: int = 0x1700
-    base_finetune: int = 0x1800
-    base_wave_note: int = 0x1900
-    base_wave_ctrl: int = 0x1A00
-    base_filter: int = 0x1B00
-    base_pulse: int = 0x1C00
-    base_inst: int = 0x1D00
-    base_seqlo: int = 0x1E00
-    base_seqhi: int = 0x1F00
-    base_cmd: int = 0x2000
-    base_order: Tuple[int, int, int] = (0x2100, 0x2500, 0x2900)
-    base_seq: int = 0x2D00
 
     def ptr_addr(self, index: int) -> int:
         """Header-block address holding the pointer word for ``$0FA0`` index."""
@@ -275,34 +259,97 @@ def _fits(data: List[int], limit: int, what: str) -> List[int]:
     return data
 
 
-def _lay_tables(tune: Tune, profile: EditorProfile, poke) -> None:
+class _Layout:
+    """Table bases read from a driver's ``$0FA0`` block, with room per table."""
+
+    def __init__(self, driver: bytes, profile: EditorProfile) -> None:
+        if not driver:
+            raise SidParseError(
+                "editor export needs the stock driver (the work file's bytes "
+                "from $0F00 to its first table); table bases are taken from "
+                "its $0FA0 pointer block and are never invented"
+            )
+        self.profile = profile
+        self.driver = driver
+        self.idx = {
+            "init": profile.idx_init,
+            "pitch": profile.idx_pitch,
+            "finetune": profile.idx_finetune,
+            "wave": profile.idx_wave,
+            "wave2": profile.idx_wave2,
+            "filter": profile.idx_filter,
+            "pulse": profile.idx_pulse,
+            "inst": profile.idx_inst,
+            "order0": profile.idx_order[0],
+            "order1": profile.idx_order[1],
+            "order2": profile.idx_order[2],
+            "seqlo": profile.idx_seqlo,
+            "seqhi": profile.idx_seqhi,
+            "cmd": profile.idx_cmd,
+        }
+        self.base = {name: self._ptr(index) for name, index in self.idx.items()}
+        order_end = max(self.base[f"order{v}"] for v in range(3)) + profile.order_stride
+        self.seq_base = order_end
+        starts = sorted(set(self.base.values()) | {order_end})
+        for addr in starts:
+            if not profile.load_addr <= addr < _TOP:
+                raise SidParseError(f"driver table base ${addr:04X} out of range")
+        self.floor = min(self.base.values())
+        self._starts = starts
+
+    def _ptr(self, index: int) -> int:
+        offset = self.profile.ptr_addr(index) - self.profile.load_addr
+        if offset < 0 or offset + 2 > len(self.driver):
+            raise SidParseError(
+                f"driver too short: no $0FA0 pointer {index:#04x} "
+                f"({len(self.driver)} bytes)"
+            )
+        return self.driver[offset] | (self.driver[offset + 1] << 8)
+
+    def room(self, name: str) -> int:
+        """Bytes from the table's base up to the next table base."""
+        base = self.base[name]
+        later = [a for a in self._starts if a > base]
+        return (later[0] if later else _TOP) - base
+
+
+def _lay_tables(tune: Tune, layout: _Layout, poke) -> None:
+    base = layout.base
     wave = tune.wavetable
-    poke(profile.base_wave_note, _fits(wave.note_col, _MAX_TABLE, "wave note col"))
-    poke(profile.base_wave_ctrl, _fits(wave.ctrl_col, _MAX_TABLE, "wave ctrl col"))
-    poke(profile.base_pitch, _fits(tune.pitch_table, _MAX_TABLE, "pitch table"))
+
+    def put(name: str, data: List[int], what: str) -> None:
+        poke(base[name], _fits(data, min(_MAX_TABLE, layout.room(name)), what))
+
+    put("wave", wave.note_col, "wave note col")
+    put("wave2", wave.ctrl_col, "wave ctrl col")
+    put("pitch", tune.pitch_table, "pitch table")
     filt: List[int] = []
     for step in tune.filter_program:
         filt += [step.value, step.step, step.dwell, step.next_off]
-    poke(profile.base_filter, _fits(filt, _MAX_TABLE, "filter table"))
+    put("filter", filt, "filter table")
     pulse: List[int] = []
     for step in tune.pw_program:
         pulse += [step.reset, step.step, step.dir_rate, step.next_off]
-    poke(profile.base_pulse, _fits(pulse, _MAX_TABLE, "pulse table"))
+    put("pulse", pulse, "pulse table")
     cmds: List[int] = []
     for cmd in tune.commands:
         cmds += [cmd.lo, cmd.hi]
-    poke(profile.base_cmd, _fits(cmds, _MAX_TABLE, "command table"))
-    for index, inst in enumerate(tune.instruments):
-        poke(profile.base_inst + index * 8, inst.raw[:8])
+    put("cmd", cmds, "command table")
+    insts: List[int] = []
+    for inst in tune.instruments:
+        insts += list(inst.raw[:8])
+    _fits(insts, layout.room("inst"), "instrument table")
+    poke(base["inst"], insts)
+    limit = layout.profile.order_stride
     for voice in range(3 if tune.subtunes else 0):
         data = _voice_block(tune, voice)
-        if len(data) > profile.order_stride:
+        cap = min(limit, layout.room(f"order{voice}"))
+        if len(data) > cap:
             raise SidParseError(
-                f"order list voice {voice} overflows "
-                f"({len(data)} > {profile.order_stride} bytes)"
+                f"order list voice {voice} overflows ({len(data)} > {cap} bytes)"
             )
-        poke(profile.base_order[voice], data)
-    _lay_sequences(tune, profile, poke)
+        poke(base[f"order{voice}"], data)
+    _lay_sequences(tune, layout, poke)
 
 
 def _mark_pair(raw: List[int]) -> List[int]:
@@ -326,74 +373,74 @@ def _voice_block(tune: Tune, voice: int) -> List[int]:
     return block + block[-2:]
 
 
-def _lay_sequences(tune: Tune, profile: EditorProfile, poke) -> None:
-    addr = profile.base_seq
+def _lay_sequences(tune: Tune, layout: _Layout, poke) -> None:
+    count = len(tune.pattern_raw)
+    for name in ("seqlo", "seqhi"):
+        if count > layout.room(name):
+            raise SidParseError(f"sequence {name} table overflows ({count} entries)")
+    addr = layout.seq_base
     for index, raw in enumerate(tune.pattern_raw):
         if addr + len(raw) > _TOP:
             raise SidParseError("sequence data overflows 64K image")
-        poke(profile.base_seqlo + index, [addr & 0xFF])
-        poke(profile.base_seqhi + index, [(addr >> 8) & 0xFF])
+        poke(layout.base["seqlo"] + index, [addr & 0xFF])
+        poke(layout.base["seqhi"] + index, [(addr >> 8) & 0xFF])
         poke(addr, raw)  # verbatim: source pattern bytes incl. $7F terminator
         addr += len(raw)
 
 
-def _lay_pointers(tune: Tune, profile: EditorProfile, poke) -> None:
-    def word(index: int, value: int) -> None:
-        poke(profile.ptr_addr(index), [value & 0xFF, (value >> 8) & 0xFF])
-
-    word(profile.idx_init, profile.base_init_data)
-    word(profile.idx_pitch, profile.base_pitch)
-    word(profile.idx_finetune, profile.base_finetune)
-    word(profile.idx_wave, profile.base_wave_note)
-    word(profile.idx_wave2, profile.base_wave_ctrl)
-    word(profile.idx_filter, profile.base_filter)
-    word(profile.idx_pulse, profile.base_pulse)
-    word(profile.idx_inst, profile.base_inst)
+def _lay_init_data(tune: Tune, layout: _Layout, poke) -> None:
+    """Init-data block at ``ptr[3]``: three order words, tempo at ``+6``."""
+    if layout.room("init") < 7:
+        raise SidParseError("init-data block does not fit before the next table")
+    init = layout.base["init"]
     for voice in range(3):
-        word(profile.idx_order[voice], profile.base_order[voice])
-    word(profile.idx_seqlo, profile.base_seqlo)
-    word(profile.idx_seqhi, profile.base_seqhi)
-    word(profile.idx_cmd, profile.base_cmd)
-    poke(profile.ptr_magic, list(profile.version_magic))
+        addr = layout.base[f"order{voice}"]
+        poke(init + voice * 2, [addr & 0xFF, (addr >> 8) & 0xFF])
     tempo = tune.subtunes[0].tempo if tune.subtunes else 0
-    poke(profile.base_init_data + 6, [tempo & 0xFF])
+    poke(init + 6, [tempo & 0xFF])  # +7 is left alone
 
 
 def write_editor_prg(
-    tune: Tune, *, driver: bytes = b"", profile: Optional[EditorProfile] = None
+    tune: Tune, *, driver: bytes, profile: Optional[EditorProfile] = None
 ) -> bytes:
-    """Assemble an editor-native ``.prg`` for ``tune`` at the profile's layout.
+    """Assemble an editor-native ``.prg`` for ``tune`` on ``driver``'s layout.
 
-    Injects the caller-supplied stock ``driver`` prefix (default empty ->
-    zero-filled, non-runnable but structurally valid), splits any sequence
-    exceeding the editor's 96-row cap into consecutive row-aligned chunks
-    (rewriting the order lists), copies the recovered sequence / order / table
-    bytes **verbatim** to ``profile``'s canonical bases, writes the ``$0FA0``
-    pointer block + 5-char version magic + default tempo, and returns the
-    2-byte-load image.  ``profile`` defaults to the tune's own player version
-    (:func:`profile_for_tune`); a profile of another version is refused.  Raises
-    :class:`~pyjch.errors.SidParseError` on a version mismatch, capacity
-    overflow, or when the tune lacks a table the editor form requires.
+    ``driver`` is the headerless work-file prefix loaded at ``$0F00`` (player
+    code plus its own ``$0FA0`` pointer block, up to the first table).  Every
+    table base is read from that block.  Splits any sequence exceeding the
+    editor's 96-row cap into consecutive row-aligned chunks (rewriting the
+    order lists), copies the recovered sequence / order / table bytes
+    **verbatim** to the driver's bases, writes the init-data block, the sequence
+    lo/hi tables and the 5-char version magic, and returns the 2-byte-load
+    image.  ``profile`` defaults to the tune's own player version
+    (:func:`profile_for_tune`); a profile of another version is refused.  Raises :class:`~pyjch.errors.SidParseError` for an empty or
+    malformed driver, a version mismatch, on a table that does not fit before the next base, or when
+    the tune lacks a table the editor form requires.
     """
     if profile is None:
         profile = profile_for_tune(tune)
     else:
         _require_version(tune, profile)
+    layout = _Layout(driver, profile)
     tune = _split_long_patterns(tune)
     _check_capacity(tune)
     _require_tables(tune, profile)
     mem: Dict[int, int] = {}
+    floor = layout.floor
 
     def poke(addr: int, data) -> None:
-        base = addr - profile.load_addr
+        if addr < floor:
+            raise SidParseError(f"write at ${addr:04X} below first table ${floor:04X}")
         for offset, byte in enumerate(data):
-            mem[base + offset] = byte & 0xFF
+            mem[addr - profile.load_addr + offset] = byte & 0xFF
 
     for offset, byte in enumerate(driver):
         mem[offset] = byte
-    _lay_tables(tune, profile, poke)
-    _lay_pointers(tune, profile, poke)
-    size = max(mem) + 1 if mem else 0
+    _lay_tables(tune, layout, poke)
+    _lay_init_data(tune, layout, poke)
+    for offset, byte in enumerate(profile.version_magic):
+        mem[profile.ptr_magic - profile.load_addr + offset] = byte
+    size = max(mem) + 1
     image = bytearray(size)
     for offset, byte in mem.items():
         image[offset] = byte

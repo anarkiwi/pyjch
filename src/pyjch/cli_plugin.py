@@ -14,6 +14,7 @@ from typing import List
 from pysidtracker import FormatCommand, SidFormat
 
 from pyjch.editor import np_profile, profile_for_tune, write_editor_prg
+from pyjch.errors import SidParseError
 from pyjch.extract import extract
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import make_player
@@ -63,7 +64,26 @@ def _add_export_arguments(subparser) -> None:
         default=None,
         help="editor-prg NP version (default: the input tune's own version)",
     )
-    subparser.add_argument("--driver", help="stock player .prg for --format editor-prg")
+    subparser.add_argument(
+        "--driver",
+        help="work-file .prg (load $0F00) supplying the player code and $0FA0 "
+        "block; required for --format editor-prg",
+    )
+
+
+def _read_driver(path, profile) -> bytes:
+    """Read a driver ``.prg``: strip and check its 2-byte load address."""
+    if not path:
+        raise SidParseError("--format editor-prg needs --driver (a work-file .prg)")
+    raw = Path(path).read_bytes()
+    if len(raw) < 2:
+        raise SidParseError(f"driver {path} too short")
+    load = raw[0] | (raw[1] << 8)
+    if load != profile.load_addr:
+        raise SidParseError(
+            f"driver load address ${load:04X} != ${profile.load_addr:04X}"
+        )
+    return raw[2:]
 
 
 def _export(args, fmt) -> None:  # pylint: disable=unused-argument
@@ -71,13 +91,14 @@ def _export(args, fmt) -> None:  # pylint: disable=unused-argument
     if args.format == "text":
         Path(args.output).write_text(to_text(tune), encoding="utf-8")
     elif args.format == "editor-prg":
-        driver = Path(args.driver).read_bytes() if args.driver else b""
         profile = (
             profile_for_tune(tune)
             if args.np_version is None
             else np_profile(args.np_version)
         )
-        prg = write_editor_prg(tune, driver=driver, profile=profile)
+        prg = write_editor_prg(
+            tune, driver=_read_driver(args.driver, profile), profile=profile
+        )
         Path(args.output).write_bytes(prg)
     else:
         Path(args.output).write_text(to_json(tune), encoding="utf-8")

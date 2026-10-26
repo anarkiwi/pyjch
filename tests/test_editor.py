@@ -9,6 +9,9 @@ from pyjch.errors import SidParseError
 from pyjch.extract import extract
 
 from tests import _synth_v20 as synth
+from tests._driver import NP20_BASES, NP25_BASES, make_driver
+
+DRIVER = make_driver()
 
 
 def _tune():
@@ -37,7 +40,7 @@ def _read_ptr(profile, word):
 def test_roundtrip_np20_layout_and_tables():
     tune = _tune()
     profile = editor.NP20_PROFILE
-    prg = editor.write_editor_prg(tune, driver=b"", profile=profile)
+    prg = editor.write_editor_prg(tune, driver=DRIVER, profile=profile)
     assert prg[0] == profile.load_addr & 0xFF and prg[1] == profile.load_addr >> 8
 
     load, word, byte = _image(prg)
@@ -45,54 +48,59 @@ def test_roundtrip_np20_layout_and_tables():
 
     # version magic (5 chars) and default tempo at init-data + 6.
     assert bytes(byte(profile.ptr_magic + i) for i in range(5)) == b"20.G4"
-    assert byte(profile.base_init_data + 6) == tune.subtunes[0].tempo
+    assert byte(NP25_BASES["init"] + 6) == tune.subtunes[0].tempo
+    assert [word(NP25_BASES["init"] + 2 * v) for v in range(3)] == [
+        NP25_BASES[f"order{v}"] for v in range(3)
+    ]
 
     # every $0FA0[i] resolves to the expected canonical base.
     ptr = _read_ptr(profile, word)
-    assert ptr[profile.idx_pitch] == profile.base_pitch
-    assert ptr[profile.idx_finetune] == profile.base_finetune
-    assert ptr[profile.idx_wave] == profile.base_wave_note
-    assert ptr[profile.idx_wave2] == profile.base_wave_ctrl
-    assert profile.base_wave_ctrl == profile.base_wave_note + 0x100
-    assert ptr[profile.idx_filter] == profile.base_filter
-    assert ptr[profile.idx_pulse] == profile.base_pulse
-    assert ptr[profile.idx_inst] == profile.base_inst
-    assert [ptr[i] for i in profile.idx_order] == list(profile.base_order)
-    assert ptr[profile.idx_seqlo] == profile.base_seqlo
-    assert ptr[profile.idx_seqhi] == profile.base_seqhi
-    assert ptr[profile.idx_cmd] == profile.base_cmd
+    assert ptr[profile.idx_pitch] == NP25_BASES["pitch"]
+    assert ptr[profile.idx_finetune] == NP25_BASES["finetune"]
+    assert ptr[profile.idx_wave] == NP25_BASES["wave"]
+    assert ptr[profile.idx_wave2] == NP25_BASES["wave2"]
+    assert ptr[profile.idx_filter] == NP25_BASES["filter"]
+    assert ptr[profile.idx_pulse] == NP25_BASES["pulse"]
+    assert ptr[profile.idx_inst] == NP25_BASES["inst"]
+    orders = [NP25_BASES[f"order{v}"] for v in range(3)]
+    assert [ptr[i] for i in profile.idx_order] == orders
+    assert ptr[profile.idx_seqlo] == NP25_BASES["seqlo"]
+    assert ptr[profile.idx_seqhi] == NP25_BASES["seqhi"]
+    assert ptr[profile.idx_cmd] == NP25_BASES["cmd"]
 
     # every table sits byte-for-byte at its base (verbatim from the recovery).
     def region(base, size):
         return [byte(base + i) for i in range(size)]
 
-    assert region(profile.base_wave_note, len(tune.wavetable.note_col)) == (
+    assert region(NP25_BASES["wave"], len(tune.wavetable.note_col)) == (
         tune.wavetable.note_col
     )
-    assert region(profile.base_wave_ctrl, len(tune.wavetable.ctrl_col)) == (
+    assert region(NP25_BASES["wave2"], len(tune.wavetable.ctrl_col)) == (
         tune.wavetable.ctrl_col
     )
     for index, inst in enumerate(tune.instruments):
-        assert region(profile.base_inst + index * 8, 8) == inst.raw
+        assert region(NP25_BASES["inst"] + index * 8, 8) == inst.raw
     cmd_bytes = [b for c in tune.commands for b in (c.lo, c.hi)]
-    assert region(profile.base_cmd, len(cmd_bytes)) == cmd_bytes
+    assert region(NP25_BASES["cmd"], len(cmd_bytes)) == cmd_bytes
     pulse = [
         b for s in tune.pw_program for b in (s.reset, s.step, s.dir_rate, s.next_off)
     ]
-    assert region(profile.base_pulse, len(pulse)) == pulse
+    assert region(NP25_BASES["pulse"], len(pulse)) == pulse
     filt = [
         b for s in tune.filter_program for b in (s.value, s.step, s.dwell, s.next_off)
     ]
-    assert region(profile.base_filter, len(filt)) == filt
-    assert region(profile.base_pitch, len(tune.pitch_table)) == tune.pitch_table
+    assert region(NP25_BASES["filter"], len(filt)) == filt
+    assert region(NP25_BASES["pitch"], len(tune.pitch_table)) == tune.pitch_table
 
     # order lists are emitted verbatim (source bytes incl. $FF/$FE terminator).
     for voice, order in enumerate(tune.subtunes[0].order_lists):
-        assert region(profile.base_order[voice], len(order.raw)) == order.raw
+        assert region(NP25_BASES[f"order{voice}"], len(order.raw)) == order.raw
 
     # seq lo/hi tables resolve to the verbatim, $7F-terminated source bytes.
     for index, raw in enumerate(tune.pattern_raw):
-        seq = byte(profile.base_seqlo + index) | (byte(profile.base_seqhi + index) << 8)
+        seq = byte(NP25_BASES["seqlo"] + index) | (
+            byte(NP25_BASES["seqhi"] + index) << 8
+        )
         assert [byte(seq + i) for i in range(len(raw))] == raw
         assert raw[-1] == 0x7F
 
@@ -107,7 +115,7 @@ def test_write_read_prg_roundtrip():
     tune = editor._split_long_patterns(_tune())
     profile = editor.NP20_PROFILE
     img = editor.read_editor_prg(
-        editor.write_editor_prg(tune, profile=profile), profile=profile
+        editor.write_editor_prg(tune, driver=DRIVER, profile=profile), profile=profile
     )
     assert img.magic == profile.version_magic
     assert img.tempo == tune.subtunes[0].tempo
@@ -127,7 +135,7 @@ def test_write_read_prg_roundtrip():
 
 
 def test_read_editor_prg_rejects_wrong_magic():
-    prg = editor.write_editor_prg(_tune(), profile=editor.NP20_PROFILE)
+    prg = editor.write_editor_prg(_tune(), driver=DRIVER, profile=editor.NP20_PROFILE)
     with pytest.raises(SidParseError):
         editor.read_editor_prg(prg, profile=editor.NP25_PROFILE)
 
@@ -140,7 +148,7 @@ def test_read_editor_prg_rejects_truncated():
 def test_default_profile_follows_tune_version():
     tune = _tune()
     assert editor.profile_for_tune(tune) is editor.NP20_PROFILE
-    prg = editor.write_editor_prg(tune)
+    prg = editor.write_editor_prg(tune, driver=DRIVER)
     _load, _word, byte = _image(prg)
     assert bytes(byte(editor.NP20_PROFILE.ptr_magic + i) for i in range(5)) == b"20.G4"
 
@@ -157,7 +165,7 @@ def test_default_profile_follows_tune_version():
 )
 def test_cross_version_export_refused(profile):
     with pytest.raises(SidParseError, match="cannot export"):
-        editor.write_editor_prg(_tune(), profile=profile)
+        editor.write_editor_prg(_tune(), driver=DRIVER, profile=profile)
 
 
 def test_family_tune_has_no_profile():
@@ -166,9 +174,9 @@ def test_family_tune_has_no_profile():
         family.provenance, tier="family", version="V15/V18-class"
     )
     with pytest.raises(SidParseError, match="no editor profile"):
-        editor.write_editor_prg(family)
+        editor.write_editor_prg(family, driver=DRIVER)
     with pytest.raises(SidParseError, match="no editor profile"):
-        editor.write_editor_prg(family, profile=editor.NP25_PROFILE)
+        editor.write_editor_prg(family, driver=DRIVER, profile=editor.NP25_PROFILE)
 
 
 def test_np2x_profile_lookup():
@@ -184,13 +192,13 @@ def test_capacity_overflow_raises():
     tune = _tune()
     over = dataclasses.replace(tune, instruments=tune.instruments * 9)
     with pytest.raises(SidParseError):
-        editor.write_editor_prg(over)
+        editor.write_editor_prg(over, driver=DRIVER)
     # >114 sequences: over the editor pattern cap.
     many = dataclasses.replace(
         tune, patterns=[[]] * 115, pattern_raw=[[0x01, 0x7F]] * 115
     )
     with pytest.raises(SidParseError, match="patterns"):
-        editor.write_editor_prg(many)
+        editor.write_editor_prg(many, driver=DRIVER)
     # An over-96-row sequence with no $7F terminator cannot be split -> rejected.
     unterminated = dataclasses.replace(
         tune,
@@ -199,7 +207,7 @@ def test_capacity_overflow_raises():
         subtunes=[dataclasses.replace(tune.subtunes[0])],
     )
     with pytest.raises(SidParseError, match="rows"):
-        editor.write_editor_prg(unterminated)
+        editor.write_editor_prg(unterminated, driver=DRIVER)
 
 
 def test_long_pattern_split_roundtrip():
@@ -230,7 +238,7 @@ def test_long_pattern_split_roundtrip():
         tune, patterns=patterns, pattern_raw=pattern_raw, subtunes=[subtune]
     )
 
-    prg = editor.write_editor_prg(tune, profile=profile)
+    prg = editor.write_editor_prg(tune, driver=DRIVER, profile=profile)
     _load, word, byte = _image(prg)
 
     seqlo = word(profile.ptr_addr(profile.idx_seqlo))
@@ -262,10 +270,10 @@ def test_missing_table_raises_clear_message():
     tune = _tune()
     no_wave = dataclasses.replace(tune, wavetable=None)
     with pytest.raises(SidParseError, match="wave table"):
-        editor.write_editor_prg(no_wave)
+        editor.write_editor_prg(no_wave, driver=DRIVER)
     no_pitch = dataclasses.replace(tune, pitch_table=[])
     with pytest.raises(SidParseError, match="pitch table"):
-        editor.write_editor_prg(no_pitch)
+        editor.write_editor_prg(no_pitch, driver=DRIVER)
 
 
 def test_multi_subtune_roundtrip():
@@ -283,10 +291,53 @@ def test_multi_subtune_roundtrip():
     tune = dataclasses.replace(tune, subtunes=subs)
     profile = editor.NP20_PROFILE
     img = editor.read_editor_prg(
-        editor.write_editor_prg(tune, profile=profile), profile=profile
+        editor.write_editor_prg(tune, driver=DRIVER, profile=profile), profile=profile
     )
     assert len(img.tunes) == 3
     for k, sub in enumerate(subs):
         for voice, order in enumerate(sub.order_lists):
             assert img.tunes[k][voice] == editor._mark_pair(order.raw)
     assert img.order_lists == [list(o.raw) for o in subs[0].order_lists]
+
+
+def test_empty_driver_raises():
+    with pytest.raises(SidParseError, match="driver"):
+        editor.write_editor_prg(_tune(), driver=b"")
+
+
+def test_short_driver_raises():
+    with pytest.raises(SidParseError, match="too short"):
+        editor.write_editor_prg(_tune(), driver=DRIVER[:0x20])
+
+
+def test_bases_follow_driver_np20_layout():
+    """Tables land at the driver's bases (NP20 differs from NP22/23/25)."""
+    tune = editor._split_long_patterns(_tune())
+    profile = editor.NP20_PROFILE
+    driver = make_driver(NP20_BASES, profile)
+    prg = editor.write_editor_prg(tune, driver=driver, profile=profile)
+    load, word, byte = _image(prg)
+    # driver bytes below the first table, incl. the pointer block, survive.
+    assert prg[2 : 2 + len(driver)][:0x40] == driver[:0x40]
+    assert word(profile.ptr_addr(profile.idx_pitch)) == NP20_BASES["pitch"]
+    pitch = [byte(NP20_BASES["pitch"] + i) for i in range(len(tune.pitch_table))]
+    assert pitch == tune.pitch_table
+    img = editor.read_editor_prg(prg, profile=profile)
+    assert img.order_lists == [list(o.raw) for o in tune.subtunes[0].order_lists]
+    assert img.sequences == [list(raw) for raw in tune.pattern_raw]
+    assert img.tempo == tune.subtunes[0].tempo
+    assert byte(NP20_BASES["init"] + 7) == 0  # +7 left alone
+    # nothing below the first table base differs from the driver (but the magic).
+    body = prg[2:]
+    first = NP20_BASES["pitch"] - load
+    assert body[:first] == bytes(
+        driver[i] if not 0xEE <= i < 0xF3 else profile.version_magic[i - 0xEE]
+        for i in range(first)
+    )
+
+
+def test_table_overflowing_next_base_raises():
+    tune = _tune()
+    tight = dict(NP25_BASES, finetune=NP25_BASES["pitch"] + 2)
+    with pytest.raises(SidParseError, match="pitch table overflows"):
+        editor.write_editor_prg(tune, driver=make_driver(tight))

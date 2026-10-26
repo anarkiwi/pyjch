@@ -12,7 +12,7 @@ The public primary sources document **JCH NewPlayer 20.G4 / 21.G5** (SF2's
 `converter_jch.cpp`, CheeseCutter 0.5.1 + Laxity's `21.g5_Final.txt`). The
 **NP22-25 layout is now verified directly** by parsing the four editor songs on
 the release disk (`JCH 3.1+NP22-25.d64`), which load at `$0F00` and share the
-20.g4/21.g5 layout byte-for-byte. Rows are tagged: **[V]** verified from a source
+20.g4/21.g5 `$0FA0` index map (table *bases* differ per driver build). Rows are tagged: **[V]** verified from a source
 this doc cites (with `.d64` = read from the release disk); **[G]** a residual gap
 (the NP22-25 manual `NP22-25 docs.doc` and the closed-source packer transform).
 
@@ -88,8 +88,9 @@ byte `< 2`, real values come from the filter table's first entry.
 **Version magic `$0FEE`, read from the release `.d64` [V]:** the string is
 `NN.rX` — `"22.4X"`, `"23.FX"`, `"24.1X"`, `"25.FX"` for NP22/23/24/25 (`"20.G4"`
 / `"21.G5"` for the predecessors). An NP22-25 reader must accept `NN` in `22..25`
-— SF2's `"20.G"` gate rejects them. The `$0FA0` array layout and page-aligned
-table placement are **identical** across all four NP22-25 tunes on the disk.
+— SF2's `"20.G"` gate rejects them. The `$0FA0` array layout is **identical** across all four NP22-25 tunes on the
+disk; the table bases are not fixed across versions (NP20/21/24 differ from
+NP22/23/25) -- an exporter must read them from the driver's own `$0FA0` block.
 
 ## Table memory map (JCH 20.G4 cross-check) [V]
 
@@ -273,7 +274,7 @@ tables at the editor's addresses and write the `$0Fxx` pointer block.
 The implementable spec an exporter targets: an **unpacked editor `.prg`**, load
 `$0F00`, init `$1000`, play `$1003`. Two parts — a **player-code prefix** and a
 **data region** — with a `$0Fxx` pointer block bridging them. Addresses below are
-the verified NP20/20.G4 canonical layout; **[P]** marks a value that is a
+one verified NP20/20.G4 layout (bases vary per driver build -- see below); **[P]** marks a value that is a
 per-driver *parameter* to confirm from the NP22-25 `.d64` before it is trusted.
 
 ### Image envelope
@@ -294,7 +295,9 @@ $2CCB ┴─ sequence data (grows upward)
 The player-code prefix is **not synthesizable** and is (likely) copyrighted: an
 exporter injects a stock NP22-25 driver binary sourced at runtime from the
 release `.d64` — never committed to this repo (per the project no-copyrighted-
-material rule). The exporter owns only the data region + pointer block.
+material rule). The exporter owns only the data region + init-data block: every table base is
+read from the driver's own `$0FA0` block (an empty driver is an error), and the
+exporter never writes below the first table base.
 
 ### Header pointer block (`$0F00` page)
 
@@ -321,13 +324,16 @@ for NP22-25, verified from the `.d64`).
 
 ### Emit algorithm
 
-1. Inject the player-code prefix `[$0F00 .. $18CB)` from the sourced driver.
-2. Lay each table at its canonical base (256-byte aligned; order lists at `$400`
-   intervals; sequences packed consecutively from `$2CCB`, recording each
+1. Inject the player-code prefix `[$0F00 .. first table)` from the sourced
+   driver (the work file's own bytes, including its `$0FA0` block).
+2. Lay each table at the base given by the driver's `$0FA0` word, checking it
+   fits before the next base (order lists `$400` apart; sequences packed
+   consecutively from the end of the last order list, recording each
    sequence's address into the lo/hi vector tables).
 3. Encode every table per the byte rules in the sections above.
-4. Fill the `$0F00`-page pointer words to the chosen bases; write the version
-   magic; set the default tempo byte at `word[$0FA6]+6`.
+4. Write the init-data block at `word[$0FA6]`: three order-list words, default
+   tempo byte at `+6` (`+7` untouched); write the version magic. The pointer
+   words themselves come from the driver and are not rewritten.
 5. Emit as a 2-byte-load-address `.prg` (`$00 $0F` + image).
 
 Bounds to respect (ED3.04 capacities): ≤ 32 instruments, ≤ 31 subtunes, ≤ 114

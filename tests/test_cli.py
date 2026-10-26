@@ -15,6 +15,7 @@ from pysidtracker.header import write_psid
 
 from pyjch.cli_plugin import FORMAT
 from tests import _synth_v20 as synth
+from tests._driver import make_driver
 from tests.test_newplayer import _base_image
 from tests.tunes import V0X_REFERENCES
 
@@ -107,9 +108,15 @@ def test_export_text(tmp_path):
     assert "tier: v20" in out.read_text()
 
 
+def _driver_prg(tmp_path):
+    driver = tmp_path / "driver.prg"
+    driver.write_bytes(bytes([0x00, 0x0F]) + make_driver())
+    return driver
+
+
 def test_export_editor_prg(tmp_path):
     driver = tmp_path / "driver.prg"
-    driver.write_bytes(bytes(0x2000))
+    driver.write_bytes(bytes([0x00, 0x0F]) + make_driver())
     out = tmp_path / "tune.prg"
     assert (
         _main(
@@ -131,16 +138,32 @@ def test_export_editor_prg(tmp_path):
 
 def test_export_editor_prg_default_version_follows_input(tmp_path):
     out = tmp_path / "tune.prg"
+    driver = _driver_prg(tmp_path)
     argv = ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+    argv += ["--driver", str(driver)]
     assert _main(argv) == 0
     img = out.read_bytes()[2:]
     assert bytes(img[0x0FEE - 0x0F00 : 0x0FEE - 0x0F00 + 5]) == b"20.G4"
+    # the 2-byte load address is stripped: the pointer block is not shifted.
+    assert img[:0x40] == make_driver()[:0x40]
 
 
 def test_export_editor_prg_cross_version_refused(tmp_path):
     out = tmp_path / "tune.prg"
+    driver = _driver_prg(tmp_path)
     argv = ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+    argv += ["--driver", str(driver)]
     assert _main(argv + ["--np-version", "22"]) == 1
+
+
+def test_export_editor_prg_driver_checks(tmp_path):
+    out = tmp_path / "tune.prg"
+    argv = ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+    assert _main(argv) == 1  # no --driver
+    wrong = tmp_path / "wrong.prg"
+    wrong.write_bytes(bytes([0x01, 0x08]) + make_driver())
+    assert _main(argv + ["--driver", str(wrong)]) == 1  # load address != $0F00
+    assert not out.exists()
     assert not out.exists()
 
 
