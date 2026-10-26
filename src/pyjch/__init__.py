@@ -8,8 +8,12 @@ from pyjch.editor import (
     NP24_PROFILE,
     NP25_PROFILE,
     NP2X_PROFILE,
+    EditorImage,
     EditorProfile,
     np_profile,
+    profile_for_magic,
+    read_editor_prg,
+    version_from_name,
     write_editor_prg,
 )
 from pyjch.errors import JCHError, JCHParseError, SidParseError
@@ -38,6 +42,7 @@ from pyjch.variant import detect_variant
 __version__ = "0.6.0"
 
 __all__ = [
+    "EditorImage",
     "EditorProfile",
     "JCHError",
     "JCHParseError",
@@ -63,6 +68,9 @@ __all__ = [
     "iter_frames",
     "make_player",
     "np_profile",
+    "profile_for_magic",
+    "read_editor_prg",
+    "version_from_name",
     "parse",
     "playable",
     "read",
