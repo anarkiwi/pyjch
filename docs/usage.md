@@ -32,7 +32,7 @@ the shared `pysidtracker` command (via the `pysidtracker.formats` entry point).
 pysidtracker info   tune.sid
 pysidtracker reglog tune.sid tune.reglog --seconds 30
 pysidtracker wav    tune.sid tune.wav
-pysidtracker export tune.sid tune.prg --format editor-prg   # JCH-specific
+pysidtracker export tune.sid tune.prg --format editor-prg --driver work.prg   # JCH-specific
 ```
 
 ## Variant
