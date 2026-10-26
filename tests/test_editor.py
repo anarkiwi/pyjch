@@ -34,9 +34,9 @@ def _read_ptr(profile, word):
     return {i: word(profile.ptr_addr(i)) for i in range(0x02, 0x19)}
 
 
-def test_roundtrip_np25_layout_and_tables():
+def test_roundtrip_np20_layout_and_tables():
     tune = _tune()
-    profile = editor.NP25_PROFILE
+    profile = editor.NP20_PROFILE
     prg = editor.write_editor_prg(tune, driver=b"", profile=profile)
     assert prg[0] == profile.load_addr & 0xFF and prg[1] == profile.load_addr >> 8
 
@@ -44,7 +44,7 @@ def test_roundtrip_np25_layout_and_tables():
     assert load == profile.load_addr
 
     # version magic (5 chars) and default tempo at init-data + 6.
-    assert bytes(byte(profile.ptr_magic + i) for i in range(5)) == b"25.FX"
+    assert bytes(byte(profile.ptr_magic + i) for i in range(5)) == b"20.G4"
     assert byte(profile.base_init_data + 6) == tune.subtunes[0].tempo
 
     # every $0FA0[i] resolves to the expected canonical base.
@@ -105,7 +105,7 @@ def test_write_read_prg_roundtrip():
     back verbatim at its ``$0FA0`` pointer-block base.
     """
     tune = editor._split_long_patterns(_tune())
-    profile = editor.NP25_PROFILE
+    profile = editor.NP20_PROFILE
     img = editor.read_editor_prg(
         editor.write_editor_prg(tune, profile=profile), profile=profile
     )
@@ -127,31 +127,48 @@ def test_write_read_prg_roundtrip():
 
 
 def test_read_editor_prg_rejects_wrong_magic():
-    prg = editor.write_editor_prg(_tune(), profile=editor.NP25_PROFILE)
+    prg = editor.write_editor_prg(_tune(), profile=editor.NP20_PROFILE)
     with pytest.raises(SidParseError):
-        editor.read_editor_prg(prg, profile=editor.NP20_PROFILE)
+        editor.read_editor_prg(prg, profile=editor.NP25_PROFILE)
 
 
 def test_read_editor_prg_rejects_truncated():
     with pytest.raises(SidParseError):
-        editor.read_editor_prg(b"\x00", profile=editor.NP25_PROFILE)
+        editor.read_editor_prg(b"\x00", profile=editor.NP20_PROFILE)
+
+
+def test_default_profile_follows_tune_version():
+    tune = _tune()
+    assert editor.profile_for_tune(tune) is editor.NP20_PROFILE
+    prg = editor.write_editor_prg(tune)
+    _load, _word, byte = _image(prg)
+    assert bytes(byte(editor.NP20_PROFILE.ptr_magic + i) for i in range(5)) == b"20.G4"
 
 
 @pytest.mark.parametrize(
-    "profile,magic",
+    "profile",
     [
-        (editor.NP20_PROFILE, b"20.G4"),
-        (editor.NP21_PROFILE, b"21.G5"),
-        (editor.NP22_PROFILE, b"22.4X"),
-        (editor.NP23_PROFILE, b"23.FX"),
-        (editor.NP24_PROFILE, b"24.1X"),
-        (editor.NP25_PROFILE, b"25.FX"),
+        editor.NP21_PROFILE,
+        editor.NP22_PROFILE,
+        editor.NP23_PROFILE,
+        editor.NP24_PROFILE,
+        editor.NP25_PROFILE,
     ],
 )
-def test_each_profile_emits_its_version_magic(profile, magic):
-    prg = editor.write_editor_prg(_tune(), profile=profile)
-    _load, _word, byte = _image(prg)
-    assert bytes(byte(profile.ptr_magic + i) for i in range(5)) == magic
+def test_cross_version_export_refused(profile):
+    with pytest.raises(SidParseError, match="cannot export"):
+        editor.write_editor_prg(_tune(), profile=profile)
+
+
+def test_family_tune_has_no_profile():
+    family = _tune()
+    family.provenance = dataclasses.replace(
+        family.provenance, tier="family", version="V15/V18-class"
+    )
+    with pytest.raises(SidParseError, match="no editor profile"):
+        editor.write_editor_prg(family)
+    with pytest.raises(SidParseError, match="no editor profile"):
+        editor.write_editor_prg(family, profile=editor.NP25_PROFILE)
 
 
 def test_np2x_profile_lookup():
@@ -193,7 +210,7 @@ def test_long_pattern_split_roundtrip():
     the original recovered sequence bytes exactly (minus injected $7F).
     """
     tune = _tune()
-    profile = editor.NP25_PROFILE
+    profile = editor.NP20_PROFILE
     # A 150-row voice-0 sequence: 150 note bytes ($01), $7F terminator.
     body = [0x01] * 150
     long_raw = body + [0x7F]

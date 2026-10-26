@@ -29,7 +29,7 @@ import pytest
 
 from pyjch import reader
 from pyjch.editor import (
-    NP25_PROFILE,
+    NP20_PROFILE,
     _require_tables,
     _split_long_patterns,
     np_profile,
@@ -247,20 +247,26 @@ def test_family_table_discovery_matrix(version, hvsc):
             base = tune.provenance.bases.get(key)
             assert base is not None and load <= base < end
         assert len(wt.note_col) <= 256 and len(wt.ctrl_col) <= 256
-        _require_tables(tune, NP25_PROFILE)  # must not raise
+        _require_tables(tune, NP20_PROFILE)  # must not raise
     else:
         with pytest.raises(SidParseError):
-            _require_tables(tune, NP25_PROFILE)
-    if cov["export"]:
-        prg = write_editor_prg(tune, profile=np_profile(25))
+            _require_tables(tune, NP20_PROFILE)
+    if tune.provenance.tier == "family":
+        # Classic-family builds have no editor profile (own NN.Gx magic, #33):
+        # never stamped as another version.
+        for profile in (None, NP20_PROFILE):
+            with pytest.raises(SidParseError):
+                write_editor_prg(tune, profile=profile)
+    elif cov["export"]:
+        prg = write_editor_prg(tune, profile=np_profile(20))
         assert prg[:2] == bytes([0x00, 0x0F])  # load at $0F00
         image = prg[2:]
-        base = NP25_PROFILE.base_wave_ctrl - NP25_PROFILE.load_addr
+        base = NP20_PROFILE.base_wave_ctrl - NP20_PROFILE.load_addr
         assert list(image[base : base + len(wt.ctrl_col)]) == wt.ctrl_col
     elif cov["gate"]:
         # Tables fully discovered but an editor format capacity limit blocks it.
         with pytest.raises(SidParseError):
-            write_editor_prg(tune, profile=np_profile(25))
+            write_editor_prg(tune, profile=np_profile(20))
 
 
 # A family tune with a sequence exceeding the 96-row cap: exercises the
@@ -306,7 +312,7 @@ def test_pattern_split_roundtrip_real_tune(hvsc):
     assert any(
         sum(1 for b in raw[:-1] if b < 0x80) > 96 for raw in tune.pattern_raw
     ), "representative no longer exercises the split"
-    profile = np_profile(25)
+    profile = np_profile(20)
     prg = write_editor_prg(tune, profile=profile)
     for voice in range(3):
         emitted = _voice_sequences(prg, profile, voice)
@@ -332,7 +338,7 @@ def test_editor_prg_roundtrip_real_tune(hvsc):
     tune = _split_long_patterns(
         extract(reader.parse(hvsc.read(MODEL_RECOVERED["V20"])))
     )
-    profile = np_profile(25)
+    profile = np_profile(20)
     img = read_editor_prg(write_editor_prg(tune, profile=profile), profile=profile)
     assert img.magic == profile.version_magic
     assert img.tempo == tune.subtunes[0].tempo

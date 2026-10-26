@@ -129,24 +129,19 @@ def test_export_editor_prg(tmp_path):
     assert prg[0] | (prg[1] << 8) == 0x0F00
 
 
-def test_export_editor_prg_default_driver_and_version(tmp_path):
+def test_export_editor_prg_default_version_follows_input(tmp_path):
     out = tmp_path / "tune.prg"
-    assert (
-        _main(
-            [
-                "export",
-                str(_synth_sid(tmp_path)),
-                str(out),
-                "--format",
-                "editor-prg",
-                "--np-version",
-                "22",
-            ]
-        )
-        == 0
-    )
+    argv = ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+    assert _main(argv) == 0
     img = out.read_bytes()[2:]
-    assert bytes(img[0x0FEE - 0x0F00 : 0x0FEE - 0x0F00 + 5]) == b"22.4X"
+    assert bytes(img[0x0FEE - 0x0F00 : 0x0FEE - 0x0F00 + 5]) == b"20.G4"
+
+
+def test_export_editor_prg_cross_version_refused(tmp_path):
+    out = tmp_path / "tune.prg"
+    argv = ["export", str(_synth_sid(tmp_path)), str(out), "--format", "editor-prg"]
+    assert _main(argv + ["--np-version", "22"]) == 1
+    assert not out.exists()
 
 
 def test_requires_subcommand():
