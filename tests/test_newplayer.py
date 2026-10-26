@@ -168,6 +168,19 @@ def test_classify_version_v20_prologue():
     assert classify_version(LOAD, _base_image(), PLAY) == "JCH_NewPlayer"
 
 
+def test_classify_version_relocated_active_cell():
+    """The V11/V17 prologue reads the ACTIVE cell relative to the code base."""
+    load = 0x2000
+    buf = bytearray(0x200)
+    prologue = bytes([0xA5, 0xFB, 0x48, 0xA5, 0xFC, 0x48, 0xA2, 0x02, 0xBD])
+    prologue += bytes([0x06, 0x20, 0xD0])
+    buf[0x10 : 0x10 + len(prologue)] = prologue
+    buf[0x03:0x06] = b"\x4c\x10\x20"  # JMP to the prologue
+    image = bytes(buf)
+    assert classify_version(load, image, 0x2003, 0x2000) == "V11/V17-class"
+    assert classify_version(load, image, 0x2003, 0x1000) == "JCH_NewPlayer"
+
+
 def test_classify_version_play_out_of_range():
     assert classify_version(LOAD, _base_image(), 0x9999) == "JCH_NewPlayer"
 

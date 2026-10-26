@@ -28,18 +28,24 @@ diffing, ``iter_frames``/``render_grid``) comes from :class:`MemPlayer`.
 Both run a full 64 KiB memory image exactly as the 6502 player does, reading
 work-RAM and pointer tables out of the loaded image and writing the SID
 registers into ``$D400..``.  The per-tune ADDRESSES are discovered (the reader
-for V0x, :func:`discover_bases` for V20), so a relocated tune plays unchanged.
+for V0x, :func:`v20_bases` for V20), so a relocated tune plays unchanged.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from pysidtracker import SID_BASE, EmuPlayer, MemPlayer, find_code_first
+from pysidtracker import SID_BASE, EmuPlayer, MemPlayer, is_jmp_vector
 
 from pyjch import constants
 from pyjch.errors import SidParseError
 from pyjch.model import Song
-from pyjch.newplayer import NewPlayerModel
+from pyjch.newplayer import (
+    ACTIVE,
+    NewPlayerModel,
+    abs_tokens,
+    find_operand,
+    hard_restart_site,
+)
 
 _D400 = SID_BASE
 
@@ -48,7 +54,6 @@ _D400 = SID_BASE
 # Fixed by the V20 player binary; the discovery idioms below embed several of
 # these operands, so a successful discovery confirms the layout.
 # ----------------------------------------------------------------------------
-ACTIVE = 0x006
 VOL = 0x009
 RESFILT = 0x00A
 SCRATCH = 0x00B
@@ -119,21 +124,6 @@ ADOVR = 0x7C5
 DELAYEN = 0x7CA
 
 
-def _abs(addr: int) -> str:
-    """``addr`` as a little-endian two-byte ``CodePattern`` operand."""
-    return f"{addr & 0xFF:02X} {addr >> 8 & 0xFF:02X}"
-
-
-def _op(image: bytes, spec: str) -> Optional[int]:
-    """First ``{op}`` operand captured by ``spec`` in ``image``, or ``None``.
-
-    ``spec`` is a :class:`~pysidtracker.CodePattern` string; ``{op:w}`` captures
-    the relocated table base baked into the instruction as a 16-bit operand.
-    """
-    match = find_code_first(image, spec)
-    return None if match is None else match.captures["op"]
-
-
 @dataclass
 class V20Bases:
     """Discovered per-tune table bases + hard-restart immediate for a V20 tune."""
@@ -154,51 +144,82 @@ class V20Bases:
     hardrestart: int
 
 
-def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
-    """Resolve every V20 data-table base + hard-restart immediate, or ``None``.
+# The V20 sub-build gate: ``reference`` (the native engine plays it) or why the
+# build was rejected.
+V20_REFERENCE = "reference"
+V20_NOT_JMP = "entry-not-jmp"
+V20_NO_TABLES = "no-pitch-or-wave"
+V20_IDIOMS = "idioms-missing"
+V20_INSTRUMENT_FIELDS = "instrument-fields"
+V20_WAVE_SPLIT = "wave-split"
+V20_OUT_OF_RANGE = "out-of-range"
+V20_GATES = (
+    V20_REFERENCE,
+    V20_NOT_JMP,
+    V20_NO_TABLES,
+    V20_IDIOMS,
+    V20_INSTRUMENT_FIELDS,
+    V20_WAVE_SPLIT,
+    V20_OUT_OF_RANGE,
+)
 
-    ``model`` supplies the bases already discovered by :mod:`pyjch.newplayer`
+
+def v20_bases(model) -> Tuple[Optional[V20Bases], str]:
+    """Resolve every V20 data-table base + hard-restart immediate, with the gate.
+
+    Returns ``(bases, "reference")`` for a V20 code build and ``(None, reason)``
+    otherwise, ``reason`` naming the sub-build gate that rejected it.  ``model``
+    supplies the bases already discovered by :mod:`pyjch.newplayer`
     (subtune/pattern/instrument/wave-note/pitch); this adds the wave-ctrl,
     filter-program, PW-program and command-parameter tables and the hard-restart
-    CTRL byte.  Returns ``None`` if any required idiom is absent -- the signal
-    the tune is not the V20 code build.
+    CTRL byte.  The code base (init) must be a ``JMP`` vector.
     """
+    img = model.sid
+    if not is_jmp_vector(img, model.init_addr):
+        return None, V20_NOT_JMP
     if model.pitch_table is None or model.wave_note_col is None:
-        return None
+        return None, V20_NO_TABLES
     # Work-cell operands sit at fixed offsets from the code base (the init
     # address), so the idioms are built per-tune and match relocated builds.
     cb = model.init_addr
     ctrlsh, grvctr, pwcur, fltcur, wtptr = (
-        _abs(cb + o) for o in (CTRLSH, GRVCTR, PWCUR, FLTCUR, WTPTR)
+        abs_tokens(cb + o) for o in (CTRLSH, GRVCTR, PWCUR, FLTCUR, WTPTR)
     )
-    wave_ctrl = _op(image, f"B9 {{op:w}} 9D {ctrlsh}")  # LDA col,Y ; STA CTRLSH,X
-    filterprog = _op(image, f"B9 {{op:w}} 8D {grvctr}")  # LDA prog,Y ; STA GRVCTR
-    pwnext = _op(image, f"BC {pwcur} B9 {{op:w}} 9D {pwcur}")  # PWProg_next
-    cmdparam = _op(image, "0A A8 B9 {op:w} 48")  # ASL;TAY;LDA param,Y;PHA
+    wave_ctrl = find_operand(
+        img, f"B9 {{op:w}} 9D {ctrlsh}"
+    )  # LDA col,Y ; STA CTRLSH,X
+    filterprog = find_operand(
+        img, f"B9 {{op:w}} 8D {grvctr}"
+    )  # LDA prog,Y ; STA GRVCTR
+    pwnext = find_operand(img, f"BC {pwcur} B9 {{op:w}} 9D {pwcur}")  # PWProg_next
+    cmdparam = find_operand(img, "0A A8 B9 {op:w} 48")  # ASL;TAY;LDA param,Y;PHA
     # The gate-off AD/SR re-arm reads two *fixed absolute* cells (LDA abs ; STA
     # $D405/$D406,Y) that only coincide with cmdparam in the reference build.
-    rearm_ad = _op(image, "AD {op:w} 99 05 D4")
-    rearm_sr = _op(image, "AD {op:w} 99 06 D4")
+    rearm_ad = find_operand(img, "AD {op:w} 99 05 D4")
+    rearm_sr = find_operand(img, "AD {op:w} 99 06 D4")
     if None in (wave_ctrl, filterprog, pwnext, cmdparam, rearm_ad, rearm_sr):
-        return None
+        return None, V20_IDIOMS
     # Instrument-record field offsets must match the reference build (AD+0,
     # SR+1, wave-flags+2, filter+3, filter-prog+4, PW-start+5); some V20-family
     # sub-builds pack instrument records differently -- reject those.
-    wave_field = _op(image, "B9 {op:w} 48 29 80")  # LDA inst+2,Y ; PHA ; AND #$80
-    filt_field = _op(image, "B9 {op:w} 48 29 F0")  # LDA inst+3,Y ; PHA ; AND #$F0
-    fprog_field = _op(image, f"B9 {{op:w}} 8D {fltcur}")  # LDA inst+4,Y ; STA FLTCUR
+    wave_field = find_operand(
+        img, "B9 {op:w} 48 29 80"
+    )  # LDA inst+2,Y ; PHA ; AND #$80
+    filt_field = find_operand(
+        img, "B9 {op:w} 48 29 F0"
+    )  # LDA inst+3,Y ; PHA ; AND #$F0
+    fprog_field = find_operand(img, f"B9 {{op:w}} 8D {fltcur}")  # inst+4,Y ; STA FLTCUR
     instr = model.instruments
     if wave_field != instr + 2 or filt_field != instr + 3 or fprog_field != instr + 4:
-        return None
-    # The note-path and absolute-path wave-note reads (LDY $1795,X ; LDA col,Y)
+        return None, V20_INSTRUMENT_FIELDS
+    # The note-path and absolute-path wave-note reads (LDY WTPTR,X ; LDA col,Y)
     # must index the same column; a rare sub-build splits them -- reject it.
-    note_wave = _op(image, f"BC {wtptr} B9 {{op:w}} 30")  # freq_note wave read
+    note_wave = find_operand(img, f"BC {wtptr} B9 {{op:w}} 30")  # freq_note wave read
     if note_wave != model.wave_note_col:
-        return None
+        return None, V20_WAVE_SPLIT
     # Hard-restart CTRL immediate: LDA #imm ; STA $D404,Y.
-    hr = find_code_first(image, "A9 {op} 99 04 D4")
+    hr = hard_restart_site(img)
     hard = 0x09 if hr is None else hr.captures["op"]
-    end = load + len(image)
     bases = V20Bases(
         pitch=model.pitch_table,
         subtune=model.subtune_table,
@@ -226,26 +247,22 @@ def discover_bases(load: int, image: bytes, model) -> Optional[V20Bases]:
         bases.patternptr_hi,
         bases.cmdparam,
     ):
-        if not load <= addr < end:
-            return None
-    return bases
+        if not img.contains(addr):
+            return None, V20_OUT_OF_RANGE
+    return bases, V20_REFERENCE
 
 
 def playable(model) -> Optional[V20Bases]:
     """Return ``V20Bases`` if ``model`` is a byte-exact-replayable V20 tune.
 
     Requires the code base (init) to be a ``JMP`` vector and every V20 idiom to
-    resolve in range.  This gates only the NATIVE V20 engine; ``None`` for any
-    other NewPlayer family build, which :func:`make_player` plays byte-exactly
-    on :class:`~pysidtracker.EmuPlayer` (the tune's own 6502 driver on
-    jennings) rather than a native transcription.
+    resolve in range (see :func:`v20_bases` for the gate that rejects a build).
+    This gates only the NATIVE V20 engine; ``None`` for any other NewPlayer
+    family build, which :func:`make_player` plays byte-exactly on
+    :class:`~pysidtracker.EmuPlayer` (the tune's own 6502 driver on jennings)
+    rather than a native transcription.
     """
-    image = model.image
-    init = model.init_addr
-    off = init - model.load_addr
-    if not 0 <= off < len(image) - 2 or image[off] != 0x4C:
-        return None
-    return discover_bases(model.load_addr, image, model)
+    return v20_bases(model)[0]
 
 
 class JchPlayer(MemPlayer):

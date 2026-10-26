@@ -33,8 +33,9 @@ from pysidtracker import (
 )
 from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
+from pyjch.variant import detect_variant
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "EditorProfile",
@@ -57,6 +58,7 @@ __all__ = [
     "__version__",
     "engine_of",
     "extract",
+    "detect_variant",
     "from_json",
     "iter_frames",
     "make_player",

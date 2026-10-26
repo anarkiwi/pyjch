@@ -24,14 +24,17 @@ def test_render_matches_player():
     assert grid.dtype == np.int16
     np.testing.assert_array_equal(grid, JchPlayer(reader.parse(data)).render_grid(120))
     assert json.loads(json.dumps(info)) == info
-    assert info == {
+    assert {k: info[k] for k in ("engine", "version", "rsid", "trigger")} == {
         "engine": "v20",
         "version": "JCH_NewPlayer",
         "rsid": False,
         "trigger": None,
-        "speed": 1,
-        "dynamic": False,
     }
+    assert (info["speed"], info["dynamic"]) == (1, False)
+    # The build facets come from the detected variant, each with its source.
+    assert info["model"] == "family"
+    assert info["v20_gate"] == "reference"
+    assert info["engine.src"].startswith("inferred(")
 
 
 def test_render_v0x_reports_v0x(hvsc):

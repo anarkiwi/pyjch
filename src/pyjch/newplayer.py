@@ -36,10 +36,19 @@ structure.  Byte-exact playback is a separate concern (native for V20, via
 :class:`~pysidtracker.EmuPlayer` for the rest).  See ``docs/versions.md``.
 """
 
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from functools import cached_property, lru_cache
+from typing import Dict, List, Optional, Tuple
 
-from pysidtracker import CodePattern, find_code_all, find_code_first
+from pysidtracker import (
+    CodePattern,
+    SidImage,
+    SiteMatch,
+    SitePattern,
+    code_match_at,
+    follow_jmp,
+    is_jmp_vector,
+)
 
 from pyjch.errors import SidParseError
 
@@ -50,52 +59,97 @@ _ORD_LOOP = 0xFF
 _SUBTUNE_RECORD = 8  # bytes per subtune record {v0lo,hi,v1lo,hi,v2lo,hi,tempo,?}
 _MAX_ORDER_WALK = 512  # order-list length cap for the coherence walk
 
+# Offset of the ``ACTIVE`` work cell from the code base (the init address); the
+# play-routine prologues read it, so their operand is built per tune.
+ACTIVE = 0x006
 
-def _op(image: bytes, spec: str) -> Optional[int]:
-    """First ``{op}`` operand captured by ``spec`` in ``image``, or ``None``.
+# Facet values: the wave-table layouts, pitch-table forms and CTRL-shadow forms a
+# family build can take.
+WAVE_COLUMNS = "columns"
+WAVE_NOTE_ONLY = "note-only"
+WAVE_STREAM = "stream"
+WAVE_NONE = "none"
+PITCH_ADC_CARRY = "adc-carry"
+PITCH_INTERLEAVED = "interleaved"
+PITCH_NONE = "none"
+SHADOW_V13 = "v13"
+SHADOW_V9 = "v9"
+SHADOW_NONE = "none"
 
-    ``spec`` is a :class:`~pysidtracker.CodePattern` string: fixed opcodes plus
+# A recovered form: its facet value and the code address it was read at.
+Form = Tuple[str, Optional[int]]
+
+
+def image_of(load: int, image: bytes) -> SidImage:
+    """A bare :class:`~pysidtracker.SidImage` of ``image`` loaded at ``load``."""
+    return SidImage.from_prg(load.to_bytes(2, "little") + image)
+
+
+@lru_cache(maxsize=512)
+def _site(spec: str, first: bool) -> SitePattern:
+    return SitePattern(spec, first=first)
+
+
+def find_site(img: SidImage, spec: str) -> Optional[SiteMatch]:
+    """The lowest-address match of site ``spec`` in the loaded code, or ``None``."""
+    return _site(spec, True).find_first(img)
+
+
+def find_sites(img: SidImage, spec: str) -> List[SiteMatch]:
+    """Every match of site ``spec`` in the loaded code, ascending."""
+    return _site(spec, False).find_all(img)
+
+
+def find_operand(img: SidImage, spec: str) -> Optional[int]:
+    """First ``{op}`` operand captured by site ``spec`` in ``img``, or ``None``.
+
+    ``spec`` is a :class:`~pysidtracker.SitePattern` string: fixed opcodes plus
     ``{op:w}`` for the relocated table base baked into the instruction operand.
     Each engine idiom is one such masked code fragment.
     """
-    match = find_code_first(image, spec)
+    match = find_site(img, spec)
     return None if match is None else match.captures["op"]
 
 
-def _w(value: int) -> str:
-    """A 16-bit value as two little-endian ``CodePattern`` literal tokens."""
+def abs_tokens(value: int) -> str:
+    """A 16-bit value as two little-endian pattern literal tokens."""
     return f"{value & 0xFF:02X} {(value >> 8) & 0xFF:02X}"
 
 
-def _find_instrument_base(image: bytes) -> Optional[int]:
-    """``LDA inst,Y ; LDY stride,X ; STA $D405,Y`` -> instrument-record base."""
-    return _op(image, "B9 {op:w} BC ?? ?? 99 05 D4")
+_INSTRUMENT = "B9 {op:w} BC ?? ?? 99 05 D4"  # LDA inst,Y ; LDY stride,X ; STA $D405,Y
+_SUBTUNE = "A2 00 B9 {op:w} 9D"  # LDX #$00 ; LDA subtune,Y ; STA abs,X
+# CTRL-shadow cell from the blit ``LDA shadow,X .. AND gate,X ; STA $D404,Y``: the
+# per-voice CTRL byte ANDed with the gate mask and written every frame.  ``LDA
+# shadow,X`` (``BD``) sits immediately before ``AND gate,X`` (V13+ builds) or one
+# ``LDY stride,X`` (``BC``) earlier (V9-11 builds).
+_CTRL_SHADOW = (
+    "( v13: BD {op:w} 3D ?? ?? 99 04 D4 " "| v9: BD {op:w} BC ?? ?? 3D ?? ?? 99 04 D4 )"
+)
+_CMDPARAM = "0A A8 B9 {op:w} 48"  # ASL ; TAY ; LDA param,Y ; PHA
+_FILTERPROG = "AC ?? ?? B9 {op:w} 8D"  # LDY grvidx ; LDA filterprog,Y ; STA grvctr
+# LDY pwcur,X ; LDA pwnext,Y ; STA pwcur,X: the cursor cell is read and written back.
+_PWPROG = "BC {cur:w} B9 {op:w} 9D {cur:w}"
+_PITCH_CARRY = "B9 {op:w} 69 00"  # LDA pitch+1,Y ; ADC #$00 (carry)
+_NOTE_HOLD = "B9 {op:w} C9 7E"  # LDA note,Y ; CMP #$7E (hold test)
+_HARD_RESTART = "A9 {op} 99 04 D4"  # LDA #imm ; STA $D404,Y
 
 
-def _find_subtune_base(image: bytes) -> Optional[int]:
-    """``LDX #$00 ; LDA subtune,Y ; STA abs,X`` -> subtune-table base."""
-    return _op(image, "A2 00 B9 {op:w} 9D")
+def hard_restart_site(img: SidImage) -> Optional[SiteMatch]:
+    """The hard-restart CTRL immediate site ``LDA #imm ; STA $D404,Y``, or ``None``."""
+    return find_site(img, _HARD_RESTART)
 
 
-def _find_ctrl_shadow(image: bytes) -> Optional[int]:
-    """CTRL-shadow cell from the blit ``LDA shadow,X .. AND gate,X ; STA $D404,Y``.
-
-    The shadow is the per-voice CTRL byte ANDed with the gate mask and written
-    to ``$D404,Y`` every frame.  ``LDA shadow,X`` (``BD``) sits immediately
-    before ``AND gate,X`` (V13+ builds) or one ``LDY stride,X`` (``BC``) earlier
-    (V9-11 builds).
-    """
-    for spec in (
-        "BD {op:w} 3D ?? ?? 99 04 D4",  # V13+: LDA shadow,X ; AND gate,X ; STA
-        "BD {op:w} BC ?? ?? 3D ?? ?? 99 04 D4",  # V9-11: + LDY stride,X
-    ):
-        base = _op(image, spec)
-        if base is not None:
-            return base
+def find_ctrl_shadow(img: SidImage) -> Optional[Tuple[str, SiteMatch]]:
+    """``(form, site)`` of the CTRL-shadow blit, preferring the V13+ form."""
+    hits = find_sites(img, _CTRL_SHADOW)
+    for label, form in (("v13", SHADOW_V13), ("v9", SHADOW_V9)):
+        for hit in hits:
+            if hit.alt == label:
+                return form, hit
     return None
 
 
-def _find_note_column(image: bytes, wave_ctrl: int, wtptr: int) -> Optional[int]:
+def _find_note_column(img: SidImage, wave_ctrl: int, wtptr: int) -> Optional[int]:
     """Parallel note column paired with ``wave_ctrl`` under pointer ``wtptr``.
 
     Prefers the ``$7F``-jump handler ``LDA ctrl,Y ; STA wtptr,X ; TAY ;
@@ -103,40 +157,49 @@ def _find_note_column(image: bytes, wave_ctrl: int, wtptr: int) -> Optional[int]
     the note-column read ``LDY wtptr,X ; LDA note,Y`` gated by its column test
     (``CMP #$7E/$7F`` or ``BMI/BPL``).
     """
-    jump = _op(image, f"B9 {_w(wave_ctrl)} 9D {_w(wtptr)} A8 B9 {{op:w}}")
+    jump = find_operand(
+        img, f"B9 {abs_tokens(wave_ctrl)} 9D {abs_tokens(wtptr)} A8 B9 {{op:w}}"
+    )
     if jump is not None:
         return jump
-    for m in find_code_all(image, f"BC {_w(wtptr)} B9 {{op:w}} ??"):
-        note = m.captures["op"]
-        if note != wave_ctrl and m.u8(6) in (0xC9, 0x30, 0x10):
-            return note
+    for m in find_sites(img, f"BC {abs_tokens(wtptr)} B9 {{op:w}} ( C9 | 30 | 10 )"):
+        if m.captures["op"] != wave_ctrl:
+            return m.captures["op"]
     return None
 
 
-def _find_wave_columns(image: bytes) -> Tuple[Optional[int], Optional[int]]:
-    """Discover the ``(note, ctrl)`` wavetable columns, or ``(None, None)``.
+def _find_wave_columns(
+    img: SidImage,
+) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[Form]]:
+    """Discover the ``(note, ctrl, site, shadow form)`` wavetable columns.
 
     Anchors on the CTRL-shadow cell, then the wavetable store frame
     ``LDY wtptr,X ; LDA ctrl,Y ; STA shadow,X`` -- confirmed by an ``INC
     wtptr,X`` tick (the per-frame wavetable advance) so a per-instrument CTRL
-    field group (V1/V2) is rejected -- then the parallel note column.
+    field group (V1/V2) is rejected -- then the parallel note column.  ``site``
+    is the store frame's address; the shadow form is reported even when the
+    columns are not found.
     """
-    shadow = _find_ctrl_shadow(image)
+    shadow = find_ctrl_shadow(img)
     if shadow is None:
-        return None, None
-    for m in find_code_all(image, f"BC {{wtptr:w}} B9 {{ctrl:w}} 9D {_w(shadow)}"):
+        return None, None, None, None
+    form, site = shadow
+    shadow_form: Form = (form, site.addr)
+    for m in find_sites(
+        img, f"BC {{wtptr:w}} B9 {{ctrl:w}} 9D {abs_tokens(site.captures['op'])}"
+    ):
         wtptr = m.captures["wtptr"]
         wave_ctrl = m.captures["ctrl"]
-        if bytes([0xFE, wtptr & 0xFF, wtptr >> 8]) not in image:  # INC wtptr,X
+        if bytes([0xFE, wtptr & 0xFF, wtptr >> 8]) not in img.image:  # INC wtptr,X
             continue
-        note = _find_note_column(image, wave_ctrl, wtptr)
+        note = _find_note_column(img, wave_ctrl, wtptr)
         if note is not None:
-            return note, wave_ctrl
-    return None, None
+            return note, wave_ctrl, m.addr, shadow_form
+    return None, None, None, shadow_form
 
 
-def _find_interleaved_wave(image: bytes) -> Optional[int]:
-    """Base of the V1/V2 single interleaved ``(ctrl, note)`` wave stream, or ``None``.
+def _find_interleaved_wave(img: SidImage) -> Optional[SiteMatch]:
+    """Site of the V1/V2 single interleaved ``(ctrl, note)`` wave stream, or ``None``.
 
     V1/V2 predate the two parallel wave columns: one stream holds ``ctrl`` (even
     byte, written to the CTRL shadow) and ``note`` (odd byte) alternating, with a
@@ -145,56 +208,37 @@ def _find_interleaved_wave(image: bytes) -> Optional[int]:
     init from the instrument's wave-start field -- not an inline column.  Anchored
     on the restart handler ``CMP #$FF ; BNE +9 ; LDA restart,X ; STA cursor,X ;
     JMP`` cross-checked against the stream read ``LDY cursor,X ; LDA base,Y ;
-    CMP #$FF`` with the same cursor cell.  Returns the stream base.
+    CMP #$FF`` with the same cursor cell.  The match carries the stream base as
+    ``op``.
 
     This model is *not* invertible to the editor's two 256-byte columns for a
     faithful export: the ~16-byte instrument records and the embedded limit-based
     PW/filter have no editor representation (see ``docs/versions.md``); the base
     is returned only so the recovered model can describe itself honestly.
     """
-    for m in find_code_all(image, "C9 FF D0 09 BD ?? ?? 9D {cursor:w} 4C"):
-        cursor = m.captures["cursor"]
-        read = _op(image, f"BC {_w(cursor)} B9 {{op:w}} C9 FF")
+    for m in find_sites(img, "C9 FF D0 09 BD ?? ?? 9D {cursor:w} 4C"):
+        read = find_site(
+            img, f"BC {abs_tokens(m.captures['cursor'])} B9 {{op:w}} C9 FF"
+        )
         if read is not None:
             return read
     return None
 
 
-def _find_cmdparam(image: bytes) -> Optional[int]:
-    """Command-parameter table via ``ASL ; TAY ; LDA param,Y ; PHA``."""
-    return _op(image, "0A A8 B9 {op:w} 48")
-
-
-def _find_filterprog(image: bytes) -> Optional[int]:
-    """Filter/groove program via ``LDY grvidx ; LDA filterprog,Y ; STA grvctr``."""
-    return _op(image, "AC ?? ?? B9 {op:w} 8D")
-
-
-def _find_pwprog(image: bytes) -> Optional[int]:
-    """PW program via ``LDY pwcur,X ; LDA pwnext,Y ; STA pwcur,X`` (base = next-3).
-
-    The ``LDY`` and ``STA`` cursor operands must be the same cell (the base is
-    read and written back), so the two captured words are required to agree.
-    """
-    for m in find_code_all(image, "BC {cur:w} B9 {op:w} 9D {cur2:w}"):
-        if m.captures["cur"] == m.captures["cur2"]:
-            return m.captures["op"] - 3
-    return None
-
-
-def _find_pitch_lookup(image: bytes) -> Optional[int]:
+def _find_pitch_lookup(img: SidImage) -> Optional[SiteMatch]:
     """V17 interleaved pitch read ``TAY ; LDA base,Y ; STA ; LDA base+1,Y``.
 
     V17 lacks V20's ``LDA pitch+1,Y ; ADC #$00`` high-byte-carry idiom; it reads
     the 16-bit pitch table's high byte directly from ``base+1`` after ``TAY``
-    (the freshly computed note*2+transpose index).  Returns the lo-column base.
+    (the freshly computed note*2+transpose index).  The match carries the lo-column
+    base as ``base``.
     """
-    for m in find_code_all(image, "A8 B9 {base:w}"):
+    for m in find_sites(img, "A8 B9 {base:w}"):
         base = m.captures["base"]
         nxt = bytes([0xB9, (base + 1) & 0xFF, ((base + 1) >> 8) & 0xFF])
         for gap in (6, 7):  # a 2- or 3-byte store between the two column reads
             if m.buf[m.addr + gap : m.addr + gap + 3] == nxt:
-                return base
+                return m
     return None
 
 
@@ -246,19 +290,22 @@ class NewPlayerModel:
     pwprog: Optional[int] = None
     image: bytes = b""
     container_header: bytes = b""
+    # How each discovery idiom was realised: ``{facet: (value, code address)}``
+    # (``wave``, ``pitch``, ``ctrl_shadow``); read by :mod:`pyjch.variant`.
+    forms: Dict[str, Form] = field(default_factory=dict)
+
+    @cached_property
+    def sid(self) -> SidImage:
+        """The loaded image as a :class:`~pysidtracker.SidImage`."""
+        return image_of(self.load_addr, self.image)
 
     def _byte(self, abs_addr: int) -> Optional[int]:
-        idx = abs_addr - self.load_addr
-        if 0 <= idx < len(self.image):
-            return self.image[idx]
-        return None
+        return self.sid.byte(abs_addr) if self.sid.contains(abs_addr) else None
 
     def _word(self, abs_addr: int) -> Optional[int]:
-        lo = self._byte(abs_addr)
-        hi = self._byte(abs_addr + 1)
-        if lo is None or hi is None:
+        if not (self.sid.contains(abs_addr) and self.sid.contains(abs_addr + 1)):
             return None
-        return lo | (hi << 8)
+        return self.sid.word(abs_addr)
 
     def orderlist_ptr(self, subtune: int, voice: int) -> Optional[int]:
         """Absolute address of ``voice``'s order list for ``subtune``."""
@@ -270,11 +317,12 @@ class NewPlayerModel:
 
     def pattern_ptr(self, index: int) -> Optional[int]:
         """Absolute base address of pattern ``index``."""
-        lo = self._byte(self.patternptr_lo + index)
-        hi = self._byte(self.patternptr_hi + index)
-        if lo is None or hi is None:
+        if not (
+            self.sid.contains(self.patternptr_lo + index)
+            and self.sid.contains(self.patternptr_hi + index)
+        ):
             return None
-        return lo | (hi << 8)
+        return self.sid.ptr(self.patternptr_lo, self.patternptr_hi, index)
 
     def instrument(self, index: int) -> Optional[List[int]]:
         """The 8-byte instrument record ``index`` (AD,SR,wavspd,filt,...)."""
@@ -316,22 +364,73 @@ class NewPlayerModel:
             indices.append(byte)
 
 
-def _entry_vectors_ok(load: int, image: bytes, init: int, play: int) -> bool:
+def _entry_vectors_ok(img: SidImage, init: int, play: int) -> bool:
     """``init`` and ``play`` are ``JMP`` vectors into the image.
 
     The family's entry points are a ``JMP init ; JMP play`` pair; the pair sits
     at offset ``init - load`` (not necessarily image start -- e.g. tunes that
     load at ``$0F00`` with ``init=$1000`` carry a leading block).
     """
-    end = load + len(image)
-    for vec in (init, play):
-        off = vec - load
-        if not 0 <= off < len(image) - 2 or image[off] != 0x4C:
-            return False
-        target = image[off + 1] | (image[off + 2] << 8)
-        if not load <= target < end:
-            return False
-    return True
+    return is_jmp_vector(img, init) and is_jmp_vector(img, play)
+
+
+def _discover(img: SidImage, init: int, play: int):
+    """``(bases, forms)`` of the family tables in ``img``, or ``None`` if absent."""
+    if not _entry_vectors_ok(img, init, play):
+        return None
+    bases = {
+        "subtune_table": find_operand(img, _SUBTUNE),
+        "patternptr_lo": find_operand(img, "B9 {op:w} 85 FB"),  # LDA lo,Y ; STA $FB
+        "patternptr_hi": find_operand(img, "B9 {op:w} 85 FC"),  # LDA hi,Y ; STA $FC
+        "instruments": find_operand(img, _INSTRUMENT),
+    }
+    for addr in bases.values():
+        if addr is None or not img.contains(addr):
+            return None
+    forms: Dict[str, Form] = {}
+    note, ctrl, site, shadow = _find_wave_columns(img)
+    if shadow is not None:
+        forms["ctrl_shadow"] = shadow
+    if (
+        note is not None
+        and ctrl is not None
+        and img.contains(note)
+        and img.contains(ctrl)
+    ):
+        bases["wave_note_col"] = note
+        bases["wave_ctrl_col"] = ctrl
+        forms["wave"] = (WAVE_COLUMNS, site)
+    else:
+        hold = find_site(img, _NOTE_HOLD)
+        if hold is not None and img.contains(hold.captures["op"]):
+            bases["wave_note_col"] = hold.captures["op"]
+            forms["wave"] = (WAVE_NOTE_ONLY, hold.addr)
+        stream = _find_interleaved_wave(img)
+        if stream is not None and img.contains(stream.captures["op"]):
+            bases["wave_stream"] = stream.captures["op"]
+            forms.setdefault("wave", (WAVE_STREAM, stream.addr))
+    carry = find_site(img, _PITCH_CARRY)
+    if carry is not None and img.load < carry.captures["op"] < img.end:
+        bases["pitch_table"] = carry.captures["op"] - 1
+        forms["pitch"] = (PITCH_ADC_CARRY, carry.addr)
+    else:  # V17: interleaved read, no ADC-carry high byte
+        lookup = _find_pitch_lookup(img)
+        if (
+            lookup is not None
+            and img.contains(lookup.captures["base"])
+            and _pitch_coherent(img.image, img.load, lookup.captures["base"])
+        ):
+            bases["pitch_table"] = lookup.captures["base"]
+            forms["pitch"] = (PITCH_INTERLEAVED, lookup.addr)
+    pwprog = find_site(img, _PWPROG)
+    for key, addr in (
+        ("cmdparam", find_operand(img, _CMDPARAM)),
+        ("filterprog", find_operand(img, _FILTERPROG)),
+        ("pwprog", None if pwprog is None else pwprog.captures["op"] - 3),
+    ):
+        if addr is not None and img.contains(addr):
+            bases[key] = addr
+    return bases, forms
 
 
 def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
@@ -341,53 +440,8 @@ def discover(load: int, image: bytes, init: int, play: int) -> Optional[dict]:
     table, pattern-pointer low/high, instrument records) are all present and
     in range; the optional wavetable/pitch bases are included when found.
     """
-    if not _entry_vectors_ok(load, image, init, play):
-        return None
-    end = load + len(image)
-    bases = {
-        "subtune_table": _find_subtune_base(image),
-        "patternptr_lo": _op(image, "B9 {op:w} 85 FB"),  # LDA lo,Y ; STA $FB
-        "patternptr_hi": _op(image, "B9 {op:w} 85 FC"),  # LDA hi,Y ; STA $FC
-        "instruments": _find_instrument_base(image),
-    }
-    for addr in bases.values():
-        if addr is None or not load <= addr < end:
-            return None
-    note, ctrl = _find_wave_columns(image)
-    if (
-        note is not None
-        and ctrl is not None
-        and load <= note < end
-        and load <= ctrl < end
-    ):
-        bases["wave_note_col"] = note
-        bases["wave_ctrl_col"] = ctrl
-    else:
-        wave = _op(image, "B9 {op:w} C9 7E")  # LDA note,Y ; CMP #$7E (hold test)
-        if wave is not None and load <= wave < end:
-            bases["wave_note_col"] = wave
-        stream = _find_interleaved_wave(image)
-        if stream is not None and load <= stream < end:
-            bases["wave_stream"] = stream
-    pitch_hi = _op(image, "B9 {op:w} 69 00")  # LDA pitch+1,Y ; ADC #$00 (carry)
-    if pitch_hi is not None and load < pitch_hi < end:
-        bases["pitch_table"] = pitch_hi - 1
-    else:  # V17: interleaved read, no ADC-carry high byte
-        pitch = _find_pitch_lookup(image)
-        if (
-            pitch is not None
-            and load <= pitch < end
-            and _pitch_coherent(image, load, pitch)
-        ):
-            bases["pitch_table"] = pitch
-    for key, addr in (
-        ("cmdparam", _find_cmdparam(image)),
-        ("filterprog", _find_filterprog(image)),
-        ("pwprog", _find_pwprog(image)),
-    ):
-        if addr is not None and load <= addr < end:
-            bases[key] = addr
-    return bases
+    found = _discover(image_of(load, image), init, play)
+    return None if found is None else found[0]
 
 
 def recover(  # pylint: disable=too-many-arguments,too-many-locals
@@ -410,12 +464,13 @@ def recover(  # pylint: disable=too-many-arguments,too-many-locals
     tune whose discovered bases do not form a coherent song is rejected rather
     than returned as garbage.
     """
-    bases = discover(load, image, init, play)
-    if bases is None:
+    found = _discover(image_of(load, image), init, play)
+    if found is None:
         raise SidParseError(
             "not a recoverable JCH NewPlayer family layout: "
             "required table-discovery idioms absent or out of range"
         )
+    bases, forms = found
     model = NewPlayerModel(
         load_addr=load,
         init_addr=init,
@@ -427,6 +482,7 @@ def recover(  # pylint: disable=too-many-arguments,too-many-locals
         num_subtunes=max(1, num_subtunes),
         image=image,
         container_header=header,
+        forms=forms,
         **bases,
     )
     end = load + len(image)
@@ -462,40 +518,55 @@ def recognize(load: int, image: bytes, init: int, play: int) -> Optional[int]:
 
 
 # ---- best-effort prologue classes (play-routine prologue, masked) -----------
-# Masked ``CodePattern`` skeletons of the opcode run at the play routine that
-# cluster the common family builds; address operands are wildcarded (``??``).
-# Derived by byte analysis of HVSC representatives (not copied from any signature
-# database), and used only to *label* a recovered model, never to gate recovery.
-# A play prologue does not map 1:1 to a sidid ``Vnn`` sub-version -- several sidid
-# versions share one -- so these are honest prologue-class tags, not exact version
-# numbers (use ``sidid`` for the precise sub-version).  V20's is distinctive.
-_PROLOGUE_CLASSES: Tuple[Tuple[str, CodePattern], ...] = tuple(
-    (tag, CodePattern(spec))
-    for tag, spec in (
-        ("V20", "A5 FB 48 A5 FC 48 CE ?? ?? 10 1D AD"),
-        ("V9-class", "A5 FB 48 A5 FC 48 A2 02 CE ?? ?? 10"),
-        ("V13/V14-class", "A2 02 BD ?? ?? C9 02 D0 ?? BC ?? ??"),
-        ("V11/V17-class", "A5 FB 48 A5 FC 48 A2 02 BD ?? ?? D0"),
-        ("V15/V18-class", "A2 02 A5 FB 48 A5 FC 48 BD ?? ??"),
-    )
+# Masked skeletons of the opcode run at the play routine that cluster the common
+# family builds; address operands are wildcarded (``??``) except the ``ACTIVE``
+# work cell, whose address is built from the tune's code base (``init``) so a
+# relocated build matches too.  Derived by byte analysis of HVSC representatives
+# (not copied from any signature database), and used only to *label* a recovered
+# model, never to gate recovery.  A play prologue does not map 1:1 to a sidid
+# ``Vnn`` sub-version -- several sidid versions share one -- so these are honest
+# prologue-class tags, not exact version numbers (use ``sidid`` for the precise
+# sub-version).  V20's is distinctive.
+_PROLOGUE_CLASSES: Tuple[Tuple[str, str], ...] = (
+    ("V20", "A5 FB 48 A5 FC 48 CE ?? ?? 10 1D AD"),
+    ("V9-class", "A5 FB 48 A5 FC 48 A2 02 CE ?? ?? 10"),
+    ("V13/V14-class", "A2 02 BD ?? ?? C9 02 D0 ?? BC ?? ??"),
+    ("V11/V17-class", "A5 FB 48 A5 FC 48 A2 02 BD {active} D0"),
+    ("V15/V18-class", "A2 02 A5 FB 48 A5 FC 48 BD {active}"),
 )
 
+DEFAULT_VERSION = "JCH_NewPlayer"
 
-def classify_version(load: int, image: bytes, play: int) -> str:
-    """Best-effort prologue-class tag for ``image`` (else ``JCH_NewPlayer``).
+
+@lru_cache(maxsize=512)
+def _prologue_patterns(active: int) -> Tuple[Tuple[str, CodePattern], ...]:
+    cell = abs_tokens(active)
+    return tuple(
+        (tag, CodePattern(spec.format(active=cell))) for tag, spec in _PROLOGUE_CLASSES
+    )
+
+
+def prologue_class(img: SidImage, init: int, play: int) -> Optional[Tuple[str, int]]:
+    """``(tag, address)`` of the prologue class matched at ``play``, or ``None``.
 
     Matches each masked prologue skeleton at the play routine, following a
     ``JMP abs`` play vector; the tag is a play-prologue class, not an exact
     sidid sub-version.
     """
-    play_off = play - load
-    if 0 <= play_off < len(image) - 2 and image[play_off] == 0x4C:
-        play_off = image[play_off + 1] + (image[play_off + 2] << 8) - load
-    if not 0 <= play_off < len(image):
-        return "JCH_NewPlayer"
-    for tag, pattern in _PROLOGUE_CLASSES:
-        if find_code_first(
-            image, pattern, start=play_off, end=play_off + pattern.length
-        ):
-            return tag
-    return "JCH_NewPlayer"
+    start = follow_jmp(img, play)
+    for tag, pattern in _prologue_patterns((init + ACTIVE) & 0xFFFF):
+        if code_match_at(img, pattern, start) is not None:
+            return tag, start
+    return None
+
+
+def classify_version(
+    load: int, image: bytes, play: int, init: Optional[int] = None
+) -> str:
+    """Best-effort prologue-class tag for ``image`` (else ``JCH_NewPlayer``).
+
+    ``init`` is the code base (default: the load address) the ``ACTIVE`` work
+    cell is relative to.
+    """
+    found = prologue_class(image_of(load, image), load if init is None else init, play)
+    return DEFAULT_VERSION if found is None else found[0]
