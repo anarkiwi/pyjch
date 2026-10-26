@@ -27,7 +27,7 @@ back to the same order lists, sequences and tables (see the round-trip tests).
 """
 
 from dataclasses import dataclass, replace
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from pyjch.errors import SidParseError
 from pyjch.songmodel import OrderEntry, Tune
@@ -120,6 +120,21 @@ def np_profile(version: int) -> EditorProfile:
         return _NP_ALL[version]
     except KeyError as exc:
         raise SidParseError(f"no editor profile for NP version {version}") from exc
+
+
+def profile_for_tune(tune: Tune) -> EditorProfile:
+    """Return the editor profile matching ``tune``'s own player version.
+
+    Only V20 tunes have a faithful editor target (``20.G4``).  Classic-family
+    tunes (V9-V18 etc.) have their own ``NN.Gx`` work-file formats with no
+    profile here yet, so they raise rather than being stamped as another version.
+    """
+    if tune.provenance.tier == "v20":
+        return NP20_PROFILE
+    raise SidParseError(
+        f"no editor profile for player {tune.provenance.version!r} "
+        f"(tier {tune.provenance.tier}): only V20 (20.G4) tunes can be exported"
+    )
 
 
 def _pattern_rows(raw: List[int]) -> int:
@@ -227,6 +242,17 @@ def _check_capacity(tune: Tune) -> None:
             raise SidParseError(f"pattern {index} too long ({rows} > 96 rows)")
 
 
+def _require_version(tune: Tune, profile: EditorProfile) -> None:
+    """Refuse a cross-version export: table semantics differ per player version."""
+    native = profile_for_tune(tune)
+    if profile.version_magic != native.version_magic:
+        raise SidParseError(
+            f"cannot export a {native.version_magic.decode('ascii')} tune as "
+            f"{profile.version_magic.decode('ascii')}: command, instrument and "
+            "replay-speed semantics differ between player versions"
+        )
+
+
 def _require_tables(tune: Tune, profile: EditorProfile) -> None:
     magic = profile.version_magic.decode("ascii")
     tier = tune.provenance.tier
@@ -313,7 +339,7 @@ def _lay_pointers(tune: Tune, profile: EditorProfile, poke) -> None:
 
 
 def write_editor_prg(
-    tune: Tune, *, driver: bytes = b"", profile: EditorProfile = NP25_PROFILE
+    tune: Tune, *, driver: bytes = b"", profile: Optional[EditorProfile] = None
 ) -> bytes:
     """Assemble an editor-native ``.prg`` for ``tune`` at the profile's layout.
 
@@ -323,10 +349,15 @@ def write_editor_prg(
     (rewriting the order lists), copies the recovered sequence / order / table
     bytes **verbatim** to ``profile``'s canonical bases, writes the ``$0FA0``
     pointer block + 5-char version magic + default tempo, and returns the
-    2-byte-load image.  Raises
-    :class:`~pyjch.errors.SidParseError` on capacity overflow or when the tune
-    lacks a table the editor form requires.
+    2-byte-load image.  ``profile`` defaults to the tune's own player version
+    (:func:`profile_for_tune`); a profile of another version is refused.  Raises
+    :class:`~pyjch.errors.SidParseError` on a version mismatch, capacity
+    overflow, or when the tune lacks a table the editor form requires.
     """
+    if profile is None:
+        profile = profile_for_tune(tune)
+    else:
+        _require_version(tune, profile)
     tune = _split_long_patterns(tune)
     _check_capacity(tune)
     _require_tables(tune, profile)

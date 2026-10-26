@@ -13,7 +13,7 @@ from typing import List
 
 from pysidtracker import FormatCommand, SidFormat
 
-from pyjch.editor import np_profile, write_editor_prg
+from pyjch.editor import np_profile, profile_for_tune, write_editor_prg
 from pyjch.extract import extract
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import make_player
@@ -60,8 +60,8 @@ def _add_export_arguments(subparser) -> None:
         "--np-version",
         type=int,
         choices=(20, 21, 22, 23, 24, 25),
-        default=25,
-        help="editor-prg NP version (default 25)",
+        default=None,
+        help="editor-prg NP version (default: the input tune's own version)",
     )
     subparser.add_argument("--driver", help="stock player .prg for --format editor-prg")
 
@@ -72,7 +72,12 @@ def _export(args, fmt) -> None:  # pylint: disable=unused-argument
         Path(args.output).write_text(to_text(tune), encoding="utf-8")
     elif args.format == "editor-prg":
         driver = Path(args.driver).read_bytes() if args.driver else b""
-        prg = write_editor_prg(tune, driver=driver, profile=np_profile(args.np_version))
+        profile = (
+            profile_for_tune(tune)
+            if args.np_version is None
+            else np_profile(args.np_version)
+        )
+        prg = write_editor_prg(tune, driver=driver, profile=profile)
         Path(args.output).write_bytes(prg)
     else:
         Path(args.output).write_text(to_json(tune), encoding="utf-8")
