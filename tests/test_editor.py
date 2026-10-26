@@ -249,3 +249,27 @@ def test_missing_table_raises_clear_message():
     no_pitch = dataclasses.replace(tune, pitch_table=[])
     with pytest.raises(SidParseError, match="pitch table"):
         editor.write_editor_prg(no_pitch)
+
+
+def test_multi_subtune_roundtrip():
+    """Three subtunes survive write -> read; the block ends with a double mark."""
+    tune = editor._split_long_patterns(_tune())
+    base = tune.subtunes[0]
+    subs = []
+    for k in range(3):
+        orders = []
+        for order in base.order_lists:
+            raw = list(order.raw)
+            raw[0] = 0x80 + k  # distinct transpose per subtune
+            orders.append(dataclasses.replace(order, raw=raw))
+        subs.append(dataclasses.replace(base, order_lists=orders))
+    tune = dataclasses.replace(tune, subtunes=subs)
+    profile = editor.NP25_PROFILE
+    img = editor.read_editor_prg(
+        editor.write_editor_prg(tune, profile=profile), profile=profile
+    )
+    assert len(img.tunes) == 3
+    for k, sub in enumerate(subs):
+        for voice, order in enumerate(sub.order_lists):
+            assert img.tunes[k][voice] == editor._mark_pair(order.raw)
+    assert img.order_lists == [list(o.raw) for o in subs[0].order_lists]
