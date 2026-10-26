@@ -408,3 +408,13 @@ counts tunes. `read_editor_prg` walks the order bytes, splits at
 single marks and stops at the first double mark (`EditorImage.tunes[k][voice]`);
 `write_editor_prg` emits every subtune back to back and closes the block with a
 double mark. The default tempo (`init + 6`) is shared by all tunes.
+
+## Version selection on export
+
+`write_editor_prg` defaults to the tune's own player version (V20 -> `20.G4`).
+Naming a profile of another version raises `SidParseError`: command sets,
+instrument records and the super-table row 0 (hard restart in 20.G4, replay
+speed in NP22-25) differ, so only a real converter could map them. Classic-family
+tunes (V9-V18) have their own `NN.Gx` formats and no profile yet, so they are
+refused rather than stamped as another version. `pysidtracker export
+--np-version` likewise defaults to the input's version.
