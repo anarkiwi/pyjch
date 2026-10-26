@@ -92,6 +92,14 @@ byte `< 2`, real values come from the filter table's first entry.
 disk; the table bases are not fixed across versions (NP20/21/24 differ from
 NP22/23/25) -- an exporter must read them from the driver's own `$0FA0` block.
 
+**Reading other work files.** Every JCH editor work file (NP04 through NP25,
+`10.G1`, `17.Q0`, `21.B4`/`21.G4`/`21.G6`, ...) carries the same `$0FA0` pointer
+block, so `read_editor_prg` identifies the version from the `$0FEE` string (any
+`NN.xx`) and resolves every table through the pointer words. NP04-NP06 files
+have five zero bytes there; their version comes from the `NAME/05.02` file-name
+suffix when given (`name=`). NP04.13 spaces its order lists `$100` apart: only
+the writer's `order_stride` assumes `$400`, the reader does not.
+
 ## Table memory map (JCH 20.G4 cross-check) [V]
 
 Independent map from [Codebase64][cb64] (self-declared "not 100% complete").

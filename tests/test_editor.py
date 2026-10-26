@@ -341,3 +341,46 @@ def test_table_overflowing_next_base_raises():
     tight = dict(NP25_BASES, finetune=NP25_BASES["pitch"] + 2)
     with pytest.raises(SidParseError, match="pitch table overflows"):
         editor.write_editor_prg(tune, driver=make_driver(tight))
+
+
+def _work_file(magic):
+    """A written NP20 work file whose ``$0FEE`` magic is replaced by ``magic``."""
+    prg = bytearray(
+        editor.write_editor_prg(_tune(), driver=DRIVER, profile=editor.NP20_PROFILE)
+    )
+    start = 2 + editor.NP20_PROFILE.ptr_magic - editor.NP20_PROFILE.load_addr
+    prg[start : start + 5] = magic
+    return bytes(prg)
+
+
+@pytest.mark.parametrize(
+    "magic", [b"20.G4", b"21.G4", b"21.B4", b"21.G6", b"10.G1", b"17.Q0", b"04.13"]
+)
+def test_read_detects_any_nn_magic(magic):
+    tune = _tune()
+    img = editor.read_editor_prg(_work_file(magic))
+    assert img.magic == magic
+    assert img.version == magic.decode("ascii")
+    assert img.order_lists == [list(o.raw) for o in tune.subtunes[0].order_lists]
+    assert img.sequences == [list(raw) for raw in tune.pattern_raw]
+
+
+def test_read_magicless_work_file_uses_name():
+    prg = _work_file(bytes(5))
+    assert editor.read_editor_prg(prg).version is None
+    assert editor.read_editor_prg(prg, name="GROOVY (4)/05.02").version == "05.02"
+    assert editor.read_editor_prg(prg, name="untitled").version is None
+    assert editor.version_from_name("WORK/SWEET (2)/06.01") == "06.01"
+
+
+def test_read_rejects_non_work_file_magic():
+    with pytest.raises(SidParseError, match="not an editor work file"):
+        editor.read_editor_prg(_work_file(b"hello"))
+
+
+def test_read_editor_prg_is_public_api():
+    import pyjch
+
+    assert pyjch.read_editor_prg is editor.read_editor_prg
+    assert pyjch.EditorImage is editor.EditorImage
+    assert pyjch.profile_for_magic(b"25.FX") is editor.NP25_PROFILE

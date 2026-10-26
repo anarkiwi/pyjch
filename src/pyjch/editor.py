@@ -24,6 +24,7 @@ from an emitted image via the ``$0FA0`` pointer block, so an export round-trips
 back to the same order lists, sequences and tables (see the round-trip tests).
 """
 
+import re
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
@@ -105,6 +106,36 @@ def np_profile(version: int) -> EditorProfile:
         return _NP_ALL[version]
     except KeyError as exc:
         raise SidParseError(f"no editor profile for NP version {version}") from exc
+
+
+_MAGIC_RE = re.compile(rb"\d\d\.[0-9A-Za-z]{2}")
+_NAME_RE = re.compile(rb"(\d\d\.[0-9A-Za-z]{2})\s*$")
+_NO_MAGIC = bytes(5)
+
+
+def profile_for_magic(magic: bytes) -> EditorProfile:
+    """Return the profile for any work-file ``NN.xx`` magic, or the zero magic.
+
+    Every JCH editor work file shares the ``$0FA0`` pointer block; only the
+    5-char ``$0FEE`` version string differs, so any well-formed magic (NP04-NP25,
+    ``21.G4``/``21.G6``, ``10.G1`` ...) is accepted.  The six writer profiles are
+    returned as themselves; five zero bytes (NP04.13, 05.02, 06.01: no magic)
+    give a profile with that zero magic.  Raises
+    :class:`~pyjch.errors.SidParseError` for anything else.
+    """
+    magic = bytes(magic)
+    for known in _NP_ALL.values():
+        if known.version_magic == magic:
+            return known
+    if magic != _NO_MAGIC and not _MAGIC_RE.fullmatch(magic):
+        raise SidParseError(f"not an editor work file: magic {magic!r}")
+    return EditorProfile(version_magic=magic)
+
+
+def version_from_name(name: str) -> Optional[str]:
+    """Version (``NN.xx``) carried by a work-file name such as ``NAME/05.02``."""
+    found = _NAME_RE.search(name.encode("latin-1", "replace"))
+    return found.group(1).decode("ascii") if found else None
 
 
 def profile_for_tune(tune: Tune) -> EditorProfile:
@@ -467,6 +498,7 @@ class EditorImage:
     order_lists: List[List[int]]
     sequences: List[List[int]]
     tunes: List[List[List[int]]] = field(default_factory=list)
+    version: Optional[str] = None  # ``NN.xx``: from the magic, else the file name
 
     def _byte(self, addr: int) -> int:
         offset = addr - self.load_addr
@@ -486,7 +518,7 @@ class EditorImage:
 
 
 def read_editor_prg(
-    prg: bytes, *, profile: EditorProfile = NP25_PROFILE
+    prg: bytes, *, profile: Optional[EditorProfile] = None, name: Optional[str] = None
 ) -> EditorImage:
     """Invert :func:`write_editor_prg`: recover an editor ``.prg``'s structures.
 
@@ -501,6 +533,13 @@ def read_editor_prg(
     are read on demand through :meth:`EditorImage.table`.  Raises
     :class:`~pyjch.errors.SidParseError` on a truncated image or a magic that
     does not match ``profile``.
+
+    With no ``profile`` the version is taken from the file's own ``$0FEE``
+    magic (:func:`profile_for_magic`): any ``NN.xx`` string is accepted, and a
+    zero magic (NP04-NP06 work files) falls back to the ``NN.xx`` suffix of
+    ``name``.  Every table is resolved through the pointer words, never profile
+    constants.  :attr:`EditorImage.version` reports the identified version
+    (``None`` when neither magic nor name carries one).
     """
     if len(prg) < 2:
         raise SidParseError("editor .prg too short")
@@ -516,6 +555,11 @@ def read_editor_prg(
     def word(addr: int) -> int:
         return byte(addr) | (byte(addr + 1) << 8)
 
+    if profile is None:
+        probe = EditorProfile(version_magic=_NO_MAGIC)
+        profile = profile_for_magic(
+            bytes(byte(probe.ptr_magic + offset) for offset in range(5))
+        )
     magic = bytes(
         byte(profile.ptr_magic + offset) for offset in range(len(profile.version_magic))
     )
@@ -523,6 +567,9 @@ def read_editor_prg(
         raise SidParseError(
             f"editor magic {magic!r} != profile {profile.version_magic!r}"
         )
+    version = magic.decode("ascii") if magic != _NO_MAGIC else None
+    if version is None and name is not None:
+        version = version_from_name(name)
     tempo = byte(word(profile.ptr_addr(profile.idx_init)) + 6)
 
     tunes: List[List[List[int]]] = []
@@ -575,4 +622,5 @@ def read_editor_prg(
         order_lists=order_lists,
         sequences=sequences,
         tunes=tunes,
+        version=version,
     )
