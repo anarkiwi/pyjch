@@ -26,8 +26,9 @@ from typing import Any, Optional, Tuple
 
 from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
 from pysidtracker import SidParseError as _BaseSidParseError
-from pysidtracker import STATIC, Strategy, find_code_first, locate, read_bytes
+from pysidtracker import Strategy, find_code_first, locate, read_bytes
 from pysidtracker import resolve_entry_points
+from pysidtracker.locate import STATIC
 
 from pyjch import constants, newplayer
 from pyjch.errors import SidParseError
