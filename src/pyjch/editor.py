@@ -282,7 +282,7 @@ def _lay_tables(tune: Tune, profile: EditorProfile, poke) -> None:
 def _mark_pair(raw: List[int]) -> List[int]:
     """``raw`` with its ``$FF``/``$FE`` terminator widened to a 2-byte mark pair."""
     data = list(raw)
-    if len(data) % 2 == 1 and data[-1] in _MARKS:
+    if data and data[-1] in _MARKS:
         data.append(0x00)  # the second mark byte is ignored by the players
     return data
 
@@ -412,7 +412,7 @@ def read_editor_prg(
 ) -> EditorImage:
     """Invert :func:`write_editor_prg`: recover an editor ``.prg``'s structures.
 
-    Walks each voice's track table as ``(transpose, seq)`` pairs, splitting at
+    Walks each voice's track table, splitting at
     single ``FE``/``FF`` marks (one tune each) and stopping at the first double
     mark, so multi-tune work files recover every tune.
 
@@ -454,18 +454,20 @@ def read_editor_prg(
         voice_tunes: List[List[int]] = []
         raw: List[int] = []
         while True:
-            first, second = byte(addr), byte(addr + 1)
-            if first in _MARKS:
-                voice_tunes.append(raw + [first, second])
-                raw = []
-                # a single mark separates tunes; consecutive marks end the block
-                if byte(addr + 2) in _MARKS:
-                    break
-                addr += 2
+            value = byte(addr)
+            addr += 1
+            if value not in _MARKS:
+                raw.append(value)
+                if value < 0x80:
+                    referenced.add(value)
                 continue
-            raw += [first, second]
-            referenced.add(second)
-            addr += 2
+            # the byte after a mark is ignored by the players
+            voice_tunes.append(raw + [value, byte(addr)])
+            raw = []
+            addr += 1
+            # a single mark separates tunes; consecutive marks end the block
+            if byte(addr) in _MARKS:
+                break
         for k, tune_raw in enumerate(voice_tunes):
             if k == len(tunes):
                 tunes.append([])
