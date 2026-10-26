@@ -26,7 +26,8 @@ from typing import Any, Optional, Tuple
 
 from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
 from pysidtracker import SidParseError as _BaseSidParseError
-from pysidtracker import find_code_first, read_bytes, resolve_entry_points
+from pysidtracker import STATIC, Strategy, find_code_first, locate, read_bytes
+from pysidtracker import resolve_entry_points
 
 from pyjch import constants, newplayer
 from pyjch.errors import SidParseError
@@ -174,12 +175,18 @@ def parse(data: bytes, subtune: int = 0):
         raise SidParseError(
             f"subtune {subtune} out of range (container has {num_subtunes})"
         )
-    try:
-        song = _parse_v0x(load, init, play, name, author, released, image, header, img)
-        return replace(song, subtune=subtune)
-    except SidParseError as v0x_exc:
-        try:
-            model = newplayer.recover(
+    strategies = (
+        Strategy(
+            "v0x",
+            STATIC,
+            lambda im, _: _parse_v0x(
+                load, init, play, name, author, released, image, header, im
+            ),
+        ),
+        Strategy(
+            "family",
+            STATIC,
+            lambda im, _: newplayer.recover(
                 load,
                 init,
                 play,
@@ -190,12 +197,13 @@ def parse(data: bytes, subtune: int = 0):
                 header,
                 version=newplayer.classify_version(load, image, play, init),
                 num_subtunes=num_subtunes,
-            )
-            return replace(model, subtune=subtune)
-        except SidParseError as family_exc:
-            raise SidParseError(
-                f"not a supported JCH NewPlayer tune: {v0x_exc}; {family_exc}"
-            ) from family_exc
+            ),
+        ),
+    )
+    located = locate(img, strategies, init=False)
+    if not located.ok:
+        raise SidParseError(f"not a supported JCH NewPlayer tune: {located.describe()}")
+    return replace(located.layout, subtune=subtune)
 
 
 def _subtune_count(img: SidImage) -> int:
