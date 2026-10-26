@@ -26,7 +26,7 @@ from an emitted image via the ``$0FA0`` pointer block, so an export round-trips
 back to the same order lists, sequences and tables (see the round-trip tests).
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
 from pyjch.errors import SidParseError
@@ -39,6 +39,7 @@ _MAX_ROWS = 96
 _MAX_TABLE = 256
 
 _TOP = 0x10000
+_MARKS = (0xFE, 0xFF)
 
 
 @dataclass(frozen=True)
@@ -293,16 +294,36 @@ def _lay_tables(tune: Tune, profile: EditorProfile, poke) -> None:
     poke(profile.base_cmd, _fits(cmds, _MAX_TABLE, "command table"))
     for index, inst in enumerate(tune.instruments):
         poke(profile.base_inst + index * 8, inst.raw[:8])
-    if tune.subtunes:
-        for voice, order in enumerate(tune.subtunes[0].order_lists):
-            data = order.raw  # verbatim: carries transpose + $FF/$FE terminator
-            if len(data) > profile.order_stride:
-                raise SidParseError(
-                    f"order list voice {voice} overflows "
-                    f"({len(data)} > {profile.order_stride} bytes)"
-                )
-            poke(profile.base_order[voice], data)
+    for voice in range(3 if tune.subtunes else 0):
+        data = _voice_block(tune, voice)
+        if len(data) > profile.order_stride:
+            raise SidParseError(
+                f"order list voice {voice} overflows "
+                f"({len(data)} > {profile.order_stride} bytes)"
+            )
+        poke(profile.base_order[voice], data)
     _lay_sequences(tune, profile, poke)
+
+
+def _mark_pair(raw: List[int]) -> List[int]:
+    """``raw`` with its ``$FF``/``$FE`` terminator widened to a 2-byte mark pair."""
+    data = list(raw)
+    if data and data[-1] in _MARKS:
+        data.append(0x00)  # the second mark byte is ignored by the players
+    return data
+
+
+def _voice_block(tune: Tune, voice: int) -> List[int]:
+    """One voice's track table: every subtune back to back, then a double mark.
+
+    Each subtune's order bytes are emitted verbatim (transpose + sequence pairs
+    ending in a single ``FF 00``/``FE 00`` mark); the packer finds the tune count
+    from the extra mark closing the block.
+    """
+    block: List[int] = []
+    for sub in tune.subtunes:
+        block += _mark_pair(sub.order_lists[voice].raw)
+    return block + block[-2:]
 
 
 def _lay_sequences(tune: Tune, profile: EditorProfile, poke) -> None:
@@ -398,6 +419,7 @@ class EditorImage:
     tempo: int
     order_lists: List[List[int]]
     sequences: List[List[int]]
+    tunes: List[List[List[int]]] = field(default_factory=list)
 
     def _byte(self, addr: int) -> int:
         offset = addr - self.load_addr
@@ -420,6 +442,10 @@ def read_editor_prg(
     prg: bytes, *, profile: EditorProfile = NP25_PROFILE
 ) -> EditorImage:
     """Invert :func:`write_editor_prg`: recover an editor ``.prg``'s structures.
+
+    Walks each voice's track table, splitting at
+    single ``FE``/``FF`` marks (one tune each) and stopping at the first double
+    mark, so multi-tune work files recover every tune.
 
     Reads the ``$0FA0`` pointer block for every table base, the ``$0FEE`` magic
     and default tempo, then recovers the self-terminating music data -- each
@@ -452,20 +478,32 @@ def read_editor_prg(
         )
     tempo = byte(word(profile.ptr_addr(profile.idx_init)) + 6)
 
-    order_lists: List[List[int]] = []
+    tunes: List[List[List[int]]] = []
     referenced: set = set()
     for voice in range(3):
         addr = word(profile.ptr_addr(profile.idx_order[voice]))
+        voice_tunes: List[List[int]] = []
         raw: List[int] = []
         while True:
             value = byte(addr)
-            raw.append(value)
             addr += 1
-            if value in (0xFE, 0xFF):
+            if value not in _MARKS:
+                raw.append(value)
+                if value < 0x80:
+                    referenced.add(value)
+                continue
+            # the byte after a mark is ignored by the players
+            voice_tunes.append(raw + [value, byte(addr)])
+            raw = []
+            addr += 1
+            # a single mark separates tunes; consecutive marks end the block
+            if byte(addr) in _MARKS:
                 break
-            if value < 0x80:
-                referenced.add(value)
-        order_lists.append(raw)
+        for k, tune_raw in enumerate(voice_tunes):
+            if k == len(tunes):
+                tunes.append([])
+            tunes[k].append(tune_raw)
+    order_lists = [raw[:-1] for raw in tunes[0]]
 
     seqlo = word(profile.ptr_addr(profile.idx_seqlo))
     seqhi = word(profile.ptr_addr(profile.idx_seqhi))
@@ -489,4 +527,5 @@ def read_editor_prg(
         tempo=tempo,
         order_lists=order_lists,
         sequences=sequences,
+        tunes=tunes,
     )

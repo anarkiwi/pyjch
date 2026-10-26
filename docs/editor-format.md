@@ -398,6 +398,17 @@ the tune pair (no disassembler needed).
 [ccgit]: https://github.com/theyamo/CheeseCutter
 [sidid]: https://github.com/cadaver/sidid/blob/master/sidid.cfg
 
+## Multiple tunes per work file [V]
+
+From `ED6_EPIL.TXT` ("HOW TO MAKE MULTIPLE TUNES"): a work file may hold several
+tunes in one track table per voice. Tune *k+1* starts right after tune *k*'s
+single `FF 00` (wrap) or `FE 00` (stop) mark (the second byte is ignored by the
+players), and the block ends with **consecutive** marks, which is how the packer
+counts tunes. `read_editor_prg` walks the order bytes, splits at
+single marks and stops at the first double mark (`EditorImage.tunes[k][voice]`);
+`write_editor_prg` emits every subtune back to back and closes the block with a
+double mark. The default tempo (`init + 6`) is shared by all tunes.
+
 ## Version selection on export
 
 `write_editor_prg` defaults to the tune's own player version (V20 -> `20.G4`).
