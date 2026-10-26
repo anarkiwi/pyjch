@@ -34,7 +34,7 @@ def _read_ptr(profile, word):
     return {i: word(profile.ptr_addr(i)) for i in range(0x02, 0x19)}
 
 
-def test_roundtrip_np25_layout_and_tables():
+def test_roundtrip_np20_layout_and_tables():
     tune = _tune()
     profile = editor.NP20_PROFILE
     prg = editor.write_editor_prg(tune, driver=b"", profile=profile)
@@ -44,7 +44,7 @@ def test_roundtrip_np25_layout_and_tables():
     assert load == profile.load_addr
 
     # version magic (5 chars) and default tempo at init-data + 6.
-    assert bytes(byte(profile.ptr_magic + i) for i in range(5)) == b"25.FX"
+    assert bytes(byte(profile.ptr_magic + i) for i in range(5)) == b"20.G4"
     assert byte(profile.base_init_data + 6) == tune.subtunes[0].tempo
 
     # every $0FA0[i] resolves to the expected canonical base.
@@ -129,7 +129,7 @@ def test_write_read_prg_roundtrip():
 def test_read_editor_prg_rejects_wrong_magic():
     prg = editor.write_editor_prg(_tune(), profile=editor.NP20_PROFILE)
     with pytest.raises(SidParseError):
-        editor.read_editor_prg(prg, profile=editor.NP20_PROFILE)
+        editor.read_editor_prg(prg, profile=editor.NP25_PROFILE)
 
 
 def test_read_editor_prg_rejects_truncated():
