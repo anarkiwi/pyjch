@@ -7,6 +7,10 @@
   stops and ``$FF`` loops;
 * ``pattern``: ``$00``-``$7E`` notes, ``$80``-``$FF`` commands, ``$7F`` ends;
 * ``pattern_v1``: the V1/V2 (interleaved wave stream) patterns, which end at ``$FF``;
+* ``v0x_orderlist`` (V0x): ``$00``-``$7F`` run subpattern ``n``, ``$80``-``$9F`` set
+  the transpose, ``$A0``-``$FF`` restart the list;
+* ``v0x_subpattern`` (V0x): ``$00`` rest, ``$01``-``$7E`` note, ``$7F`` tie,
+  ``$80``-``$8F`` set the note duration, ``$90``-``$FF`` return to the order list;
 * ``instrument``: an 8-byte record; ``step``: a 4-byte pulse/filter record.
 """
 
@@ -15,12 +19,17 @@ from typing import Tuple
 
 from lark import Transformer
 from pysidtracker import ByteGrammar, Parsed, SidImage, select_rule
+from pysidtracker.bytegrammar import REACH
+
 
 from pyjch.errors import SidParseError
+from pyjch.newplayer import image_of
 
 ORDERLIST = "orderlist"
 PATTERN = "pattern"
 PATTERN_V1 = "pattern_v1"
+V0X_ORDERLIST = "v0x_orderlist"
+V0X_SUBPATTERN = "v0x_subpattern"
 INSTRUMENT = "instrument"
 STEP = "step"
 
@@ -41,6 +50,18 @@ class OrderStream:
 @dataclass(frozen=True)
 class PatternStream:
     """A pattern: its note/command bytes and the stream as stored."""
+
+    events: bytes
+    raw: bytes
+
+    def to_bytes(self) -> bytes:
+        """The stream as stored, terminator included."""
+        return self.raw
+
+
+@dataclass(frozen=True)
+class V0xStream:
+    """A V0x order list or subpattern: its opcode bytes and the stream as stored."""
 
     events: bytes
     raw: bytes
@@ -88,6 +109,11 @@ class _Streams(Transformer):
 
     pattern_v1 = pattern
 
+    def v0x_orderlist(self, tokens):
+        return Parsed(V0xStream(_span(tokens[:-1]), _span(tokens)), tokens[-1].end_pos)
+
+    v0x_subpattern = v0x_orderlist
+
     def instrument(self, tokens):
         return Parsed(Record(_span(tokens)), tokens[-1].end_pos)
 
@@ -98,7 +124,15 @@ class _Streams(Transformer):
 GRAMMAR = ByteGrammar(
     "pyjch",
     "newplayer.lark",
-    (ORDERLIST, PATTERN, PATTERN_V1, INSTRUMENT, STEP),
+    (
+        ORDERLIST,
+        PATTERN,
+        PATTERN_V1,
+        V0X_ORDERLIST,
+        V0X_SUBPATTERN,
+        INSTRUMENT,
+        STEP,
+    ),
     _Streams(),
     error=SidParseError,
 )
@@ -119,3 +153,21 @@ def pattern_rule(model) -> str:
         (("interleaved_wave", PATTERN_V1),),
         PATTERN,
     )
+
+
+def v0x_streams(song):
+    """``(name, model, rule)`` of the order lists and subpatterns of ``song``'s subtune."""
+    img = image_of(song.load_addr, song.image)
+    end = song.load_addr + len(song.image)
+    refs = set()
+    for voice in range(3):
+        addr = song.orderlist_ptr(song.subtune, voice)
+        name = f"order list {song.subtune}.{voice}"
+        order = GRAMMAR.read(img, addr, V0X_ORDERLIST, name, min(REACH, end - addr))
+        refs.update(byte for byte in order.model.events if byte < 0x80)
+        yield name, order.model, V0X_ORDERLIST
+    for ref in sorted(refs):
+        addr = song.subpattern_ptr(ref)
+        name = f"subpattern {ref}"
+        sub = GRAMMAR.read(img, addr, V0X_SUBPATTERN, name, min(REACH, end - addr))
+        yield name, sub.model, V0X_SUBPATTERN

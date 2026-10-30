@@ -120,10 +120,10 @@ def _parse_v0x(  # pylint: disable=too-many-arguments
     subptr_hi = _one_operand(img, _SUBHI_PAT, "subpattern ptr-hi base")
 
     freq_lo = [
-        _byte(image, constants.FREQ_LO + n) for n in range(constants.FREQ_TABLE_LEN)
+        _byte(image, constants.FREQ_LO + 2 * n) for n in range(constants.FREQ_TABLE_LEN)
     ]
     freq_hi = [
-        _byte(image, constants.FREQ_HI + n) for n in range(constants.FREQ_TABLE_LEN)
+        _byte(image, constants.FREQ_HI + 2 * n) for n in range(constants.FREQ_TABLE_LEN)
     ]
 
     return Song(

@@ -33,9 +33,9 @@ VOICES = _registers.SID_VOICES
 # binary places them at the same offsets across tunes).  The player's work cells
 # are bound in ``specs/v0x.play``.
 ORDERLIST_PTR_TABLE = 0x010  # $1010: per-subtune orderlist ptr pairs (8/subtune)
-FREQ_LO = 0x21F  # $121F: note frequency table, low bytes (0x80 entries)
-FREQ_HI = 0x220  # $1220: note frequency table, high bytes
-FREQ_TABLE_LEN = 0x80
+FREQ_LO = 0x21F  # $121F: note frequency table, interleaved 16-bit entries (low bytes)
+FREQ_HI = 0x220  # $1220: the same entries' high bytes
+FREQ_TABLE_LEN = 0x60  # notes before the table runs into the work cells at $12DF
 
 # C64 frame timing (documented hardware facts, shared).
 PAL_CLOCK_HZ = _registers.PAL_CLOCK_HZ

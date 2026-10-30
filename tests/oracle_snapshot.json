@@ -1,11 +1,11 @@
 {
  "v0x_flexible": {
-  "model": "a0823515f742b84bcbbd8a0d2d6d5d98",
+  "model": "170d5fe0ed5b44e8d5fe7c856588cab1",
   "render": "5ead09130916bd3cb4c744d7b958926a",
   "tune": "!JCHParseError: extract targets the JCH NewPlayer wavetable family; the V0x Song layout is out of scope"
  },
  "v0x_simple_tune": {
-  "model": "182c5d616cc64f6285430bef8da7d86f",
+  "model": "981796c03add348134396477d0ebeb3c",
   "render": "4e10e2b2e9f6f30b7624de5e4d7de532",
   "tune": "!JCHParseError: extract targets the JCH NewPlayer wavetable family; the V0x Song layout is out of scope"
  },

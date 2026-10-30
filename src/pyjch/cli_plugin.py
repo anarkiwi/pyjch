@@ -18,6 +18,7 @@ from pyjch import grammar
 from pyjch.editor import np_profile, profile_for_tune, write_editor_prg
 from pyjch.errors import SidParseError
 from pyjch.extract import extract
+from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import make_player
 from pyjch.reader import JchSidParser, read
@@ -55,6 +56,9 @@ def _describe(model) -> List[str]:
 
 def _streams(model) -> Iterator[Stream]:
     """The order lists, patterns and instrument records the player reads."""
+    if isinstance(model, Song):
+        yield from grammar.v0x_streams(model)
+        return
     if not isinstance(model, NewPlayerModel):
         return
     tune = extract(model)

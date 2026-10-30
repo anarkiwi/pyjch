@@ -54,8 +54,9 @@ Three independent per-voice opcode streams. The V0x reader discovers, by idiom:
   (lo) / `... $fc` (hi).
 - **Orderlist pointers** — three per-voice pairs at `$1010`, indexed by
   `subtune * 8`; the 7th byte seeds the tempo.
-- **Frequency tables** — `$121F` (lo) / `$1220` (hi), 0x80 entries, indexed by
-  note with a per-voice transpose.
+- **Frequency table** — one 16-bit little-endian entry per note from `$121F`
+  (low byte) / `$1220` (high byte), 96 notes: the table then runs into the work
+  cells at `$12DF`. The voice reads entry `2 * note + transpose`.
 
 When these V0x idioms are absent, `parse` falls back to the wavetable-family
 model reader (`pyjch.newplayer`), which discovers the family table bases —
@@ -66,11 +67,11 @@ terminator through in-range pattern pointers). `Song` resolves `orderlist_ptr` /
 `subpattern_ptr`.
 
 Init (`FUN_1060`) copies the orderlist pointer pairs into per-voice cur/base
-pointers, loads the tempo, and seeds the SID registers. Play (`FUN_10E8`) walks
-each voice's opcode stream via the zero-page pointer `$fb/$fc`: transpose-set
-opcodes (`$80–$9F`), subpattern references (`<$80` in the orderlist push a
-pointer and jump via the subpattern tables), gate/tempo counters (`$80–$8F`
-inside a subpattern), and note bytes that index the frequency table.
+pointers, loads the tempo, and seeds the SID registers. Play (`FUN_10E8`) saves
+`$FB/$FC`, walks each voice's opcode stream through them, and restores them. Each
+voice advances at most one note per call, and only when its gate counter has run
+out; the counters tick down once every tempo reload. The bytes are listed under
+[Song stream grammar](#song-stream-grammar) (`v0x_orderlist`, `v0x_subpattern`).
 
 ## Song stream grammar
 
@@ -89,6 +90,13 @@ a silently truncated song. `pysidtracker grammar TUNE` lists the parsed streams.
 | | `$80`-`$FF` | command (`$8x` duration, `$Ax` instrument, `$C0`+ command-table index) |
 | | `$7F` | ends the pattern |
 | `pattern_v1` | `$00`-`$7F` / `$80`-`$FE` / `$FF` | V1/V2 (interleaved wave stream): note / command / end |
+| `v0x_orderlist` | `$00`-`$7F` | run subpattern `n` (through the subpattern pointer tables) |
+| | `$80`-`$9F` | set the voice transpose to `(byte & $1F) - $0C` semitones, until the next set |
+| | `$A0`-`$FF` | end of list: restart at the list's first byte |
+| `v0x_subpattern` | `$00` / `$7F` | rest (gate off) / tie (gate held) |
+| | `$01`-`$7E` | note, an index into the frequency table with the transpose added |
+| | `$80`-`$8F` | set the note duration; read in the same call as the byte after it |
+| | `$90`-`$FF` | end of subpattern: back to the order list |
 | `instrument` | 8 bytes | AD, SR, wave flags, filter, filter program, pulse program, wave start 1/2 |
 | `step` | 4 bytes | pulse or filter program record |
 

@@ -20,5 +20,17 @@ END_V1: /\xff/
 orderlist: (TRANSPOSE | PATTERN)* (STOP | LOOP) _TAIL?
 pattern: (NOTE | COMMAND)* END _TAIL?
 pattern_v1: (NOTE_V1 | COMMAND_V1)* END_V1 _TAIL?
+V0X_SUBREF: /[\x00-\x7f]/
+V0X_TRANSPOSE: /[\x80-\x9f]/
+V0X_RESTART: /[\xa0-\xff]/
+v0x_orderlist: (V0X_SUBREF | V0X_TRANSPOSE)* V0X_RESTART _TAIL?
+
+V0X_REST: /\x00/
+V0X_NOTE: /[\x01-\x7e]/
+V0X_TIE: /\x7f/
+V0X_DURATION: /[\x80-\x8f]/
+V0X_RETURN: /[\x90-\xff]/
+v0x_subpattern: (V0X_REST | V0X_NOTE | V0X_TIE | V0X_DURATION)* V0X_RETURN _TAIL?
+
 instrument: BYTE~8
 step: BYTE~4
