@@ -6,13 +6,15 @@ pyjch reads JCH NewPlayer tunes at three levels:
 
 1. **Byte-exact V0x player** — the canonical **`JCH_NewPlayer_V0x`** layout.
    `pyjch.reader.parse` returns a `Song`; `pyjch.player.JchPlayer` replays it
-   register-for-register, validated frame-for-frame against the `sidtrace` oracle for **Flexible** (Scorpio) and **Simple_Tune** (JCH).
+   (the playspec `v0x.play`) register-for-register, validated frame-for-frame
+   against the `sidtrace` oracle for **Flexible** (Scorpio) and **Simple_Tune**
+   (JCH), and memory-exact against the tune's own 6502 run.
 
 2. **Byte-exact V20 player** — the **`JCH_NewPlayer_V20`** two-column wavetable
    engine (the largest HVSC bucket), reverse-engineered in
    `re-trackers/JCH_NewPlayer/{jch-architecture.md,jch-generators.md,
    jch-player.asm}` against its reference tune
-   `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.player.V20Player` runs the playspec
+   `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.player.JchPlayer` runs the playspec
    `newplayer.play` (the full 64K-image play routine: groove tempo, two parallel wavetable columns, PW
    ping-pong, portamento, vibrato, global filter sweep, hard restart) on the memory
    the tune's own init leaves, and is validated **frame-exact** against the
@@ -47,8 +49,8 @@ All tiers discover per-tune addresses by their surrounding player-code
 instruction **idiom** (relocation-safe), not a fixed offset. When neither a
 byte-exact layout nor a coherent family model can be recovered, `parse` raises
 `SidParseError` rather than returning meaningless bytes. `reglog` / the CLI
-expose byte-exact register logs for every recovered version (V0x from its native
-engine, V20 from the spec player, the rest via `EmuPlayer`).
+expose byte-exact register logs for every recovered version (V0x and V20 from their
+specs, the rest via `EmuPlayer`).
 
 ## Was the "genuinely different players" claim overstated?
 
@@ -196,8 +198,8 @@ or `Song` for V0x).
 | `JCH_DigiPlayer` | 3 | 0 | different | rejected |
 
 **Reader coverage: 2 → ~3,324 tunes** (2 V0x byte-exact + 3,322 family models).
-**Byte-exact playback: every recovered tune** — V0x through its native engine, the V20 code build
-through the playspec, the rest via `EmuPlayer` (the tune's
+**Byte-exact playback: every recovered tune** — V0x and the V20 code build
+through their playspecs, the rest via `EmuPlayer` (the tune's
 own 6502 driver on jennings).  Of the 1,737 sidid-`V20` tunes, 1,324 are the
 byte-identical V20 code build that `pyjch.player.playable` accepts for the
 V20 spec player; the remainder are packed/relocated-code rips, or rare
@@ -205,8 +207,8 @@ sub-builds with a different instrument-record layout or a split wave-note column
 which are gated out of the spec player and play byte-exact via `EmuPlayer`
 instead.  So are builds whose code differs from the reference where the SID
 registers do not show it (`code-differs`: a different saved zero-page pointer or
-filter-program start; 2 of 336 tunes in the JCH and DRAX directories).  Both the V0x engine
-and the V20 spec player are
+filter-program start; 2 of 336 tunes in the JCH and DRAX directories).  Both the V0x and the V20
+playspecs are
 validated frame-exact against the shared `sidtrace` oracle
 (`tests/test_oracle_hvsc.py`), historically also over a **random ~300-tune
 sample** of the accepted set spanning many authors (100% frame-exact for
@@ -215,7 +217,7 @@ the 1,324 is not individually asserted — the guarantee is that `playable()`
 admits only the byte-identical V20 build to the spec player.  The other family
 versions (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18) are recovered by the shared
 idiom set plus a per-tune coherence gate; their player opcode streams differ from
-V20's, so rather than a native transcription they play byte-exact via `EmuPlayer`
+V20's, so rather than a playspec they play byte-exact via `EmuPlayer`
 (also validated against the `sidtrace` oracle).
 
 ### V20 byte-exact validation

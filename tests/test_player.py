@@ -29,7 +29,6 @@ from pyjch.newplayer import NewPlayerModel
 from pyjch.player import (
     V20_CODE,
     JchPlayer,
-    V20Player,
     engine_of,
     iter_frames,
     make_player,
@@ -65,13 +64,8 @@ def test_v20_model_selects_v20():
     assert isinstance(model, NewPlayerModel)
     assert playable(model) is not None
     player = make_player(model)
-    assert isinstance(player, V20Player)
+    assert isinstance(player, JchPlayer)
     assert engine_of(player) == "v20"
-
-
-def test_jch_player_plays_only_v0x():
-    with pytest.raises(SidParseError, match="V0x Song"):
-        JchPlayer(_v20_model())
 
 
 def test_unknown_model_type_rejected():
@@ -154,8 +148,8 @@ def test_non_v20_family_falls_back_to_emulation(idiom):
         model.image, model.load_addr, model.init_addr, model.play_addr, 1
     )
     assert player.render_grid(8) == reference.render_grid(8)
-    with pytest.raises(SidParseError, match="no V20 spec"):
-        V20Player(model)
+    with pytest.raises(SidParseError, match="has no spec"):
+        JchPlayer(model)
 
 
 @pytest.mark.parametrize("relpath", V0X_REFERENCES)
