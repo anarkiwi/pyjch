@@ -41,7 +41,7 @@ pysidtracker export tune.sid tune.prg --format editor-prg --driver work.prg   # 
 value per facet, each with its source (`detected@$addr`, `default` or
 `inferred(...)`). The facets are `model`, `version` (play-prologue class),
 `engine` (`v0x`/`v20`/`emu`), `v20_gate` (`reference`, or the sub-build gate that
-rejected the native engine), `hard_restart`, `wave_layout`, `pitch_form`,
+rejected the V20 spec player), `hard_restart`, `wave_layout`, `pitch_form`,
 `ctrl_shadow_form`, `entry_points` and `v0x_layout`. It is the `variant` hook of
 the registered `jch` format, so the survey `info` and the whydiff/pathdiff site
 labels come from it, and `Tune.provenance.variant` records the same facets.
@@ -51,18 +51,20 @@ labels come from it, and `Tune.provenance.variant` records the same facets.
 - `read(src)` / `parse(bytes)` — read a `.sid`/`.prg` into a `Song` (V0x) or
   `NewPlayerModel` (wavetable family).
 - `make_player(model, subtune=0)` — the byte-exact `pysidtracker.MemPlayer` of
-  any recovered version: a `JchPlayer` for V0x (from a `Song`) and V20 (from a
-  playable `NewPlayerModel`), else a `pysidtracker.EmuPlayer` running the
-  tune's own 6502 driver on jennings; `.play_frame() -> list[(reg, val)]`,
+  any recovered version: a `JchPlayer` for V0x (from a `Song`), a `V20Player` (the
+  `newplayer.play` playspec on `SpecPlayer`) for V20 (from a playable
+  `NewPlayerModel`), else a `pysidtracker.EmuPlayer` running the tune's own 6502
+  driver on jennings; `.play_frame() -> list[(reg, val)]`,
   `.regs`, `.render_grid(nframes)`. `engine_of(player)` names the playroutine
   (`v0x` / `v20` / `emu`).
-- `JchPlayer(model)` — the native V0x / V20 engines (`.engine`); any other
-  version raises `SidParseError`.
+- `JchPlayer(model)` — the native V0x engine (`.engine`); any other model raises
+  `SidParseError`. `V20Player(model)` — the V20 spec player (`.engine`); a build
+  that is not `playable` raises `SidParseError`.
 - `iter_frames(model, max_frames)` — per-frame writes.
 - `render_grid(model, nframes) -> list[list[int]]` — forward-filled grid.
 - `register_writes_from_player` / `read_reglog` / `write_reglog` / `RegWrite`
   (the shared `pysidtracker` register-log surface).
-- `playable(model)` — the native-V20-engine gate (returns `V20Bases`, or `None`
+- `playable(model)` — the V20 spec-player gate (returns `V20Bases`, or `None`
   when `make_player` instead plays the tune byte-exact on `EmuPlayer`).
 - Model: `Song` (with `orderlist_ptr` / `subpattern_ptr` resolution),
   `NewPlayerModel` (the wavetable-family reader result).

@@ -34,6 +34,7 @@ from pyjch.newplayer import (
     NewPlayerModel,
     abs_tokens,
     find_operand,
+    find_site,
     hard_restart_site,
 )
 
@@ -44,6 +45,8 @@ _D400 = SID_BASE
 # Fixed by the V20 player binary; the discovery idioms below embed several of
 # these operands, so a successful discovery confirms the layout.
 # ----------------------------------------------------------------------------
+FLTDW = 0x791
+FLTCUT = 0x792
 GRVCTR = 0x746
 CTRLSH = 0x75D
 PWCUR = 0x781
@@ -80,6 +83,7 @@ V20_IDIOMS = "idioms-missing"
 V20_INSTRUMENT_FIELDS = "instrument-fields"
 V20_WAVE_SPLIT = "wave-split"
 V20_OUT_OF_RANGE = "out-of-range"
+V20_CODE = "code-differs"
 V20_GATES = (
     V20_REFERENCE,
     V20_NOT_JMP,
@@ -88,6 +92,7 @@ V20_GATES = (
     V20_INSTRUMENT_FIELDS,
     V20_WAVE_SPLIT,
     V20_OUT_OF_RANGE,
+    V20_CODE,
 )
 
 
@@ -144,6 +149,20 @@ def v20_bases(model) -> Tuple[Optional[V20Bases], str]:
     note_wave = find_operand(img, f"BC {wtptr} B9 {{op:w}} 30")  # freq_note wave read
     if note_wave != model.wave_note_col:
         return None, V20_WAVE_SPLIT
+    # Code the spec states but the SID registers do not show: the saved zero-page
+    # pointer, and the filter-program start (cutoff kept at $FF, dwell loaded).
+    fltcut, fltdw = (abs_tokens(cb + o) for o in (FLTCUT, FLTDW))
+    filter_start = find_site(
+        img, f"B9 {{lead:w}} C9 FF F0 03 8D {fltcut} B9 {{dwell:w}} 8D {fltdw}"
+    )
+    if (
+        find_site(img, "A5 FB 48 A5 FC 48") is None
+        or find_site(img, "68 85 FC 68 85 FB 60") is None
+        or filter_start is None
+        or filter_start.captures["lead"] != filterprog
+        or filter_start.captures["dwell"] != filterprog + 2
+    ):
+        return None, V20_CODE
     # Hard-restart CTRL immediate: LDA #imm ; STA $D404,Y.
     hr = hard_restart_site(img)
     hard = 0x09 if hr is None else hr.captures["op"]

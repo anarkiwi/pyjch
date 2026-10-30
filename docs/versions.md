@@ -12,20 +12,22 @@ pyjch reads JCH NewPlayer tunes at three levels:
    engine (the largest HVSC bucket), reverse-engineered in
    `re-trackers/JCH_NewPlayer/{jch-architecture.md,jch-generators.md,
    jch-player.asm}` against its reference tune
-   `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.player.JchPlayer` runs the full
-   64K-image play routine (groove tempo, two parallel wavetable columns, PW
-   ping-pong, portamento, vibrato, global filter sweep, hard restart) and is
-   validated **frame-exact** against the `sidtrace` register
-   oracle. `pyjch.player.playable(model)` gates this tier: it discovers every
+   `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.player.V20Player` runs the playspec
+   `newplayer.play` (the full 64K-image play routine: groove tempo, two parallel wavetable columns, PW
+   ping-pong, portamento, vibrato, global filter sweep, hard restart) on the memory
+   the tune's own init leaves, and is validated **frame-exact** against the
+   `sidtrace` register oracle and **memory-exact** against the tune's own 6502 run.
+    `pyjch.player.playable(model)` gates this tier: it discovers every
    V20 data table (subtune, wave note/ctrl columns, filter/PW programs,
    instruments, pattern pointers, command params, pitch table) plus the
    per-build hard-restart CTRL immediate and the fixed gate-off re-arm cells,
-   confirms the instrument-record field offsets match the reference build, and
+   confirms the instrument-record field offsets and the zero-page save/restore and
+   filter-program-start code match the reference build, and
    returns byte bases only when the tune **is** the V20 code build. Data tables
    are packed at per-tune (variable) addresses, so every base is discovered by
    idiom; the player-code work cells are at fixed offsets from the code base
    (the tune's init address); the idioms embedding those cells are built from
-   that address, so relocated V20 builds match natively too.
+   that address, so relocated V20 builds match too.
 
 3. **Version-aware model reader** — the remaining JCH NewPlayer **wavetable
    family** versions (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18 and the V20
@@ -45,8 +47,8 @@ All tiers discover per-tune addresses by their surrounding player-code
 instruction **idiom** (relocation-safe), not a fixed offset. When neither a
 byte-exact layout nor a coherent family model can be recovered, `parse` raises
 `SidParseError` rather than returning meaningless bytes. `reglog` / the CLI
-expose byte-exact register logs for every recovered version (V0x/V20 from their
-native engines, the rest via `EmuPlayer`).
+expose byte-exact register logs for every recovered version (V0x from its native
+engine, V20 from the spec player, the rest via `EmuPlayer`).
 
 ## Was the "genuinely different players" claim overstated?
 
@@ -54,7 +56,7 @@ native engines, the rest via `EmuPlayer`).
 NewPlayer versions were "genuinely different players" and rejected V1–V21
 (3,600+ tunes). That is true of the *player opcode stream* — the AD/SR path,
 gate handling and per-frame engine do differ between versions. For **V20** (the
-largest bucket) the opcode stream is now fully transcribed into a native engine;
+largest bucket) the opcode stream is now fully stated as a playspec;
 the other family versions play byte-exactly by running their own 6502 driver on
 jennings via `EmuPlayer`. Either way the **song data layout is the same across the
 whole wavetable family, only relocated**, and is recoverable directly from the
@@ -188,26 +190,29 @@ or `Song` for V0x).
 | `V17`  | 238  | 206 | family | model recovered |
 | `V18`  | 108  | 101 | family | model recovered |
 | `V19`  | 56   | 0   | different pointer scheme | rejected (self-modified per-voice pointers, not a `,Y` table) |
-| `V20`  | 1737 | 1647 | family (RE-documented) | **native byte-exact player** for the 1,324 that are the V20 code build; the rest of the recovered tunes play byte-exact via `EmuPlayer` |
+| `V20`  | 1737 | 1647 | family (RE-documented) | **spec-player byte-exact** for the V20 code build (1,324 at the last full census, before the `code-differs` gate); the rest of the recovered tunes play byte-exact via `EmuPlayer` |
 | `Glover_NewPlayer_V21` | 67 | 0 | different fork | rejected |
 | `Dane_NewPlayer` | 19 | 0 | different fork | rejected |
 | `JCH_DigiPlayer` | 3 | 0 | different | rejected |
 
 **Reader coverage: 2 → ~3,324 tunes** (2 V0x byte-exact + 3,322 family models).
-**Byte-exact playback: every recovered tune** — V0x and the 1,324 V20 code-build
-tunes through native pure-Python engines, the rest via `EmuPlayer` (the tune's
+**Byte-exact playback: every recovered tune** — V0x through its native engine, the V20 code build
+through the playspec, the rest via `EmuPlayer` (the tune's
 own 6502 driver on jennings).  Of the 1,737 sidid-`V20` tunes, 1,324 are the
 byte-identical V20 code build that `pyjch.player.playable` accepts for the
-**native** V20 engine; the remainder are packed/relocated-code rips, or rare
+V20 spec player; the remainder are packed/relocated-code rips, or rare
 sub-builds with a different instrument-record layout or a split wave-note column,
-which are gated out of the native engine and play byte-exact via `EmuPlayer`
-instead.  Both native routines of the unified `pyjch.player.JchPlayer` are
+which are gated out of the spec player and play byte-exact via `EmuPlayer`
+instead.  So are builds whose code differs from the reference where the SID
+registers do not show it (`code-differs`: a different saved zero-page pointer or
+filter-program start; 2 of 336 tunes in the JCH and DRAX directories).  Both the V0x engine
+and the V20 spec player are
 validated frame-exact against the shared `sidtrace` oracle
 (`tests/test_oracle_hvsc.py`), historically also over a **random ~300-tune
-sample** of the native-accepted set spanning many authors (100% frame-exact for
+sample** of the accepted set spanning many authors (100% frame-exact for
 the full sampled horizon, 120–600 frames).  Per-tune verification of every one of
 the 1,324 is not individually asserted — the guarantee is that `playable()`
-admits only the byte-identical V20 build to the native engine.  The other family
+admits only the byte-identical V20 build to the spec player.  The other family
 versions (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18) are recovered by the shared
 idiom set plus a per-tune coherence gate; their player opcode streams differ from
 V20's, so rather than a native transcription they play byte-exact via `EmuPlayer`

@@ -27,6 +27,7 @@ from pyjch.errors import SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import (
+    V20_CODE,
     JchPlayer,
     V20Player,
     engine_of,
@@ -34,6 +35,7 @@ from pyjch.player import (
     make_player,
     playable,
     render_grid,
+    v20_bases,
     v20_layout,
 )
 
@@ -130,6 +132,9 @@ def test_hard_restart_immediate_selected_per_build():
         b"\x9d\x5d\x17",  # wave-ctrl store
         b"\x8d\x46\x17",  # filter-program store
         b"\x9d\x81\x17",  # PW-program store
+        b"\xa5\xfb\x48\xa5\xfc\x48",  # zero-page pointer save
+        b"\x68\x85\xfc\x68\x85\xfb\x60",  # zero-page pointer restore
+        b"\xc9\xff\xf0\x03\x8d\x92\x17",  # filter-program start
     ],
 )
 def test_non_v20_family_falls_back_to_emulation(idiom):
@@ -178,3 +183,13 @@ def test_parse_subtune_kwarg_selects_default_subtune():
         parser.read(data, subtune=99)
     with pytest.raises(TypeError):
         parser.read(data, bogus=1)
+
+
+def test_a_build_whose_code_differs_is_gated_out_by_name():
+    image, _load = synth.build_image()
+    buf = bytearray(image)
+    idiom = b"\x68\x85\xfc\x68\x85\xfb\x60"
+    pos = buf.index(idiom)
+    buf[pos + 1] = 0x07  # PLA ; SLO $FC: the pointer is no longer restored
+    model = reader.parse(bytes(synth.build_psid()[:0x7C]) + bytes(buf))
+    assert v20_bases(model) == (None, V20_CODE)
