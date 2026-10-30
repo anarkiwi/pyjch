@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
-from pysidtracker import load_prefix
+from pysidtracker import SidImage, load_prefix, require_ram
 
 from pyjch import grammar
 from pyjch.errors import SidParseError
@@ -348,7 +348,7 @@ class _Layout:
         return (later[0] if later else _TOP) - base
 
 
-def _lay_tables(tune: Tune, layout: _Layout, poke) -> None:
+def _lay_tables(tune: Tune, layout: _Layout, poke, point) -> None:
     base = layout.base
     wave = tune.wavetable
 
@@ -384,7 +384,7 @@ def _lay_tables(tune: Tune, layout: _Layout, poke) -> None:
                 f"order list voice {voice} overflows ({len(data)} > {cap} bytes)"
             )
         poke(base[f"order{voice}"], data)
-    _lay_sequences(tune, layout, poke)
+    _lay_sequences(tune, layout, poke, point)
 
 
 def _mark_pair(raw: List[int]) -> List[int]:
@@ -408,7 +408,7 @@ def _voice_block(tune: Tune, voice: int) -> List[int]:
     return block + block[-2:]
 
 
-def _lay_sequences(tune: Tune, layout: _Layout, poke) -> None:
+def _lay_sequences(tune: Tune, layout: _Layout, poke, point) -> None:
     count = len(tune.pattern_raw)
     for name in ("seqlo", "seqhi"):
         if count > layout.room(name):
@@ -417,8 +417,7 @@ def _lay_sequences(tune: Tune, layout: _Layout, poke) -> None:
     for index, raw in enumerate(tune.pattern_raw):
         if addr + len(raw) > _TOP:
             raise SidParseError("sequence data overflows 64K image")
-        poke(layout.base["seqlo"] + index, [addr & 0xFF])
-        poke(layout.base["seqhi"] + index, [(addr >> 8) & 0xFF])
+        point(layout.base["seqlo"], layout.base["seqhi"], index, addr)
         poke(addr, raw)  # verbatim: source pattern bytes incl. $7F terminator
         addr += len(raw)
 
@@ -462,26 +461,27 @@ def write_editor_prg(
     _require_tables(tune, profile)
     for _stream in grammar.tune_streams(tune):
         pass
-    mem: Dict[int, int] = {}
+    image = SidImage.from_prg(load_prefix(profile.load_addr) + driver)
     floor = layout.floor
 
-    def poke(addr: int, data) -> None:
+    def check(addr: int, length: int) -> None:
         if addr < floor:
             raise SidParseError(f"write at ${addr:04X} below first table ${floor:04X}")
-        for offset, byte in enumerate(data):
-            mem[addr - profile.load_addr + offset] = byte & 0xFF
+        require_ram(addr, length, "editor data", SidParseError)
 
-    for offset, byte in enumerate(driver):
-        mem[offset] = byte
-    _lay_tables(tune, layout, poke)
+    def poke(addr: int, data) -> None:
+        check(addr, len(data))
+        image.poke_bytes(addr, bytes(byte & 0xFF for byte in data))
+
+    def point(lo_base: int, hi_base: int, index: int, addr: int) -> None:
+        check(lo_base + index, 1)
+        check(hi_base + index, 1)
+        image.put_ptr(lo_base, hi_base, index, addr)
+
+    _lay_tables(tune, layout, poke, point)
     _lay_init_data(tune, layout, poke)
-    for offset, byte in enumerate(profile.version_magic):
-        mem[profile.ptr_magic - profile.load_addr + offset] = byte
-    size = max(mem) + 1
-    image = bytearray(size)
-    for offset, byte in mem.items():
-        image[offset] = byte
-    return load_prefix(profile.load_addr) + bytes(image)
+    image.poke_bytes(profile.ptr_magic, bytes(profile.version_magic))
+    return image.to_prg()
 
 
 @dataclass(frozen=True)

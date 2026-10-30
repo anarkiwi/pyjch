@@ -11,7 +11,7 @@ Every recovered JCH NewPlayer driver version is covered, over each tune's whole
 length (its HVSC Songlengths entry):
 
 * **V0x** (a :class:`Song`) and **V20** (a :class:`NewPlayerModel`) render
-  through their native pure-Python engines;
+  from their playspecs on :class:`~pysidtracker.playspec.SpecPlayer`;
 * every other recovered family version renders through
   :class:`~pysidtracker.EmuPlayer` -- the tune's own 6502 driver run on jennings.
 
@@ -25,6 +25,7 @@ import oracle_hvsc
 import pytest
 from pysidtracker import aligned_match, cycles_per_frame_for_flags
 from pysidtracker.image import SidImage
+from pysidtracker.testing import require_whole, song_frames
 
 # One+ HVSC representative per recovered JCH NewPlayer driver version, each
 # verified to render register-exact against the sidtrace oracle over its whole song.
@@ -61,5 +62,6 @@ def test_render_matches_oracle(relpath, hvsc, sidtrace_oracle):
     data = path.read_bytes()
     cycles = cycles_per_frame_for_flags(SidImage.from_bytes(data).header.flags)
     oracle = sidtrace_oracle(path, frames=None, cycles_per_frame=cycles)
+    require_whole(oracle, song_frames(data, None))
     rendered = oracle_hvsc.render(data, 1, len(oracle) + 4)[0].tolist()
     assert aligned_match(oracle, rendered, max_lead=4), f"{relpath}: render != oracle"

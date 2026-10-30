@@ -83,8 +83,21 @@ V20_TUNES = {name: rel for name, rel in TUNES.items() if name.startswith("v20")}
 ROUTINES = {
     "inst_init": "BC {instn} B9 {{op:w}} 9D {wtptr}",
     "blit": "A9 00 9D {portapend} 9D {viben2} 9D {vibsup}",
+    "advance": "FE {patcur} BC {patcur} B1 FB C9 7F",
 }
+# The row advance ends where the order list stops the voice or hands the row to
+# ``not_endpat``; the stretch is run to ``not_endpat`` with the stop path's exit to the
+# voice epilogue (its final ``JMP``) redirected there.
+ADVANCE_EXIT = (
+    "C9 FE D0 0E A9 00 9D {active} BC {stride} 99 04 D4 4C {{exit:w}} BD {ndelay}"
+)
+ADVANCE_EXIT_AT = 16
+ADVANCE_STOP_AT = 18
 CELLS = {
+    "active": 0x006,
+    "stride": 0x740,
+    "ndelay": 0x748,
+    "patcur": 0x751,
     "instn": 0x01D,
     "wtptr": 0x795,
     "portapend": 0x760,
@@ -94,16 +107,23 @@ CELLS = {
 
 
 def _routine(hvsc, relpath, name):
-    """``(model, image, pc)``: the tune and where its ``name`` code begins.
+    """``(model, image, pc, stop)``: the tune and where its ``name`` code begins.
 
-    From there the 6502 code runs to the play routine's final ``RTS``.
+    From there the 6502 code runs to the play routine's final ``RTS``, or to ``stop``.
     """
     model = reader.parse(hvsc(relpath).read_bytes())
     cells = {cell: abs_tokens(model.init_addr + off) for cell, off in CELLS.items()}
     site = find_site(model.sid, ROUTINES[name].format(**cells))
     image = bytearray(0x10000)
     image[model.load_addr : model.load_addr + len(model.image)] = model.image
-    return model, bytes(image), site.addr
+    stop = None
+    if name == "advance":
+        leave = find_site(model.sid, ADVANCE_EXIT.format(**cells))
+        stop = leave.addr + ADVANCE_STOP_AT
+        image[leave.addr + ADVANCE_EXIT_AT : leave.addr + ADVANCE_STOP_AT] = (
+            stop.to_bytes(2, "little")
+        )
+    return model, bytes(image), site.addr, stop
 
 
 @pytest.mark.oracle
@@ -111,17 +131,23 @@ def _routine(hvsc, relpath, name):
 @pytest.mark.parametrize("relpath", V20_TUNES.values(), ids=list(V20_TUNES))
 def test_a_routine_is_proved_equal_to_the_6502_code(name, relpath, hvsc):
     """For all initial memory, ``voice[0].<name>`` leaves what the 6502 code leaves."""
-    model, image, pc = _routine(hvsc, relpath, name)
+    model, image, pc, stop = _routine(hvsc, relpath, name)
     layout = v20_layout(model, playable(model))
     result = validate(
-        spec("newplayer"), layout, f"voice[0].{name}", image, pc, registers={"X": 0}
+        spec("newplayer"),
+        layout,
+        f"voice[0].{name}",
+        image,
+        pc,
+        registers={"X": 0},
+        stop=stop,
     )
     assert result.proven, result.counterexample
 
 
 @pytest.mark.oracle
 def test_a_changed_spec_is_refuted_and_the_counterexample_replays(hvsc):
-    model, image, pc = _routine(hvsc, V20_TUNES["v20_7d_funkt"], "inst_init")
+    model, image, pc, _stop = _routine(hvsc, V20_TUNES["v20_7d_funkt"], "inst_init")
     layout = v20_layout(model, playable(model))
     text = (Path(pyjch.__file__).parent / "specs" / "newplayer.play").read_text()
     broken = parse(
@@ -137,6 +163,18 @@ def test_a_changed_spec_is_refuted_and_the_counterexample_replays(hvsc):
     cex = result.counterexample
     diffs = replay(broken, layout, "voice[0].inst_init", cex["memory"], pc, {"X": 0})
     assert diffs == [cex["address"]]
+
+
+@pytest.mark.oracle
+def test_a_changed_row_advance_is_refuted(hvsc):
+    model, image, pc, stop = _routine(hvsc, V20_TUNES["v20_7d_funkt"], "advance")
+    layout = v20_layout(model, playable(model))
+    text = (Path(pyjch.__file__).parent / "specs" / "newplayer.play").read_text()
+    broken = parse(text.replace("ordhi += u8(cy);", "ordhi += u8(cy) ^ 1;"))
+    result = validate(
+        broken, layout, "voice[0].advance", image, pc, registers={"X": 0}, stop=stop
+    )
+    assert not result.proven
 
 
 PATTERN_RULE = "pyjch.grammar:GRAMMAR:pattern"

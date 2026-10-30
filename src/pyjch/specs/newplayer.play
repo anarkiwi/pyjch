@@ -336,7 +336,7 @@ machine voice[x in 0..3] {
     delayed();
   }
 
-  proc after() {
+  proc advance() {
     patcur += 1;
     let nb = ind(0xFB, patcur);
     if nb == 0x7F {
@@ -359,7 +359,13 @@ machine voice[x in 0..3] {
         return;
       }
     }
-    not_endpat();
+  }
+
+  proc after() {
+    advance();
+    if active != 0 {
+      not_endpat();
+    }
   }
 
   proc note_byte(b: u8) {

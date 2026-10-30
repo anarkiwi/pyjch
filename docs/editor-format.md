@@ -313,7 +313,8 @@ exporter injects a stock NP22-25 driver binary sourced at runtime from the
 release `.d64` — never committed to this repo (per the project no-copyrighted-
 material rule). The exporter owns only the data region + init-data block: every table base is
 read from the driver's own `$0FA0` block (an empty driver is an error), and the
-exporter never writes below the first table base.
+exporter never writes below the first table base, and refuses a table whose bytes
+would reach the C64 I/O area (`$D000-$DFFF`), where the player reads chips, not RAM.
 
 ### Header pointer block (`$0F00` page)
 
