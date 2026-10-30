@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "pysidtracker>=0.43.0",
+    "lark>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -46,6 +47,9 @@ Issues = "https://github.com/anarkiwi/pyjch/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pyjch = ["*.lark"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

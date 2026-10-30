@@ -50,14 +50,10 @@ from pysidtracker import (
     is_jmp_vector,
 )
 
+from pyjch import grammar
 from pyjch.errors import SidParseError
 
-# Order-list control bytes.
-_ORD_STOP = 0xFE
-_ORD_LOOP = 0xFF
-
 _SUBTUNE_RECORD = 8  # bytes per subtune record {v0lo,hi,v1lo,hi,v2lo,hi,tempo,?}
-_MAX_ORDER_WALK = 512  # order-list length cap for the coherence walk
 
 # Offset of the ``ACTIVE`` work cell from the code base (the init address); the
 # play-routine prologues read it, so their operand is built per tune.
@@ -344,24 +340,15 @@ class NewPlayerModel:
         addr = self.orderlist_ptr(subtune, voice)
         if addr is None:
             raise SidParseError("order-list pointer out of range")
+        size = min(grammar.ORDERLIST_REACH, self.load_addr + len(self.image) - addr)
+        stream = grammar.read_stream(
+            self.sid, addr, grammar.ORDERLIST, "order list", size
+        )
         end = self.load_addr + len(self.image)
-        indices: List[int] = []
-        steps = 0
-        while True:
-            if steps >= _MAX_ORDER_WALK:
-                raise SidParseError("order list does not terminate")
-            steps += 1
-            byte = self._byte(addr)
-            if byte is None:
-                raise SidParseError("order list runs off image")
-            if byte in (_ORD_STOP, _ORD_LOOP):
-                return indices
-            addr += 1
-            if byte >= 0x80:  # transpose prefix; next byte is the pattern index
-                continue
-            if not self.load_addr <= (self.pattern_ptr(byte) or -1) < end:
-                raise SidParseError(f"pattern index {byte} points out of range")
-            indices.append(byte)
+        for pattern, _ in stream.steps:
+            if not self.load_addr <= (self.pattern_ptr(pattern) or -1) < end:
+                raise SidParseError(f"pattern index {pattern} points out of range")
+        return [pattern for pattern, _ in stream.steps]
 
 
 def _entry_vectors_ok(img: SidImage, init: int, play: int) -> bool:
