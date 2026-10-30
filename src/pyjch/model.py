@@ -26,8 +26,8 @@ class Song:
     the discovered gate-on / gate-off (rest) CTRL bytes; ``subptr_lo`` /
     ``subptr_hi`` the (relocated) subpattern pointer-table base addresses;
     ``orderlist_ptr_table`` the absolute base of the per-subtune orderlist
-    pointer pairs; ``freq_lo`` / ``freq_hi`` the split note-frequency
-    tables.
+    pointer pairs; ``freq_lo`` / ``freq_hi`` the low / high bytes of the
+    note-frequency table (one 16-bit entry per note, stored interleaved).
     """
 
     # pylint: disable=too-many-instance-attributes  # a full tune is wide

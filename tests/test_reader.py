@@ -21,8 +21,15 @@ def test_discovers_immediates_and_bases(relpath, hvsc):
     # Relocated subpattern pointer-table bases are in the loaded image range.
     assert song.load_addr <= song.subptr_lo
     assert song.load_addr <= song.subptr_hi
-    assert len(song.freq_lo) == constants.FREQ_TABLE_LEN
-    assert len(song.freq_hi) == constants.FREQ_TABLE_LEN
+
+
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_the_frequency_table_rises_with_the_note(relpath, hvsc):
+    """Each note's 16-bit frequency is above the one before it, up to the last note."""
+    song = reader.read(hvsc(relpath))
+    freqs = [lo | hi << 8 for lo, hi in zip(song.freq_lo, song.freq_hi)]
+    assert len(freqs) == constants.FREQ_TABLE_LEN
+    assert freqs == sorted(set(freqs))
 
 
 @pytest.mark.parametrize("relpath", V0X_REFERENCES)
