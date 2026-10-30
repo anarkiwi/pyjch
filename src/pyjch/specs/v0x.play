@@ -71,6 +71,7 @@ machine voice[x in 0..3] {
           st := 5;
         }
       } elif st == 3 {
+        stream order = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:v0x_orderlist";
         bv := ind(0xFB, 0);
         if bv < 0x80 {
           save_lo := zp_lo;
@@ -91,6 +92,7 @@ machine voice[x in 0..3] {
         zp_hi := base_hi;
         st := 1;
       } elif st == 5 {
+        stream notes = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:v0x_subpattern";
         bv := ind(0xFB, 0);
         if bv >= 0x80 {
           st := 8;

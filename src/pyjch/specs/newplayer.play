@@ -441,6 +441,7 @@ machine voice[x in 0..3] {
   proc fetch() {
     zp_lo := ordlo;
     zp_hi := ordhi;
+    stream order = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:orderlist";
     ndelay := 0;
     let a = ind(0xFB, 0);
     if neg(a) {
@@ -454,6 +455,7 @@ machine voice[x in 0..3] {
     }
     zp_lo := patlo[u16(a)];
     zp_hi := pathi[u16(a)];
+    stream rows = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:pattern";
     while true bound 256 {
       let byte = ind(0xFB, patcur);
       if neg(byte) {
