@@ -1,0 +1,178 @@
+spec v0x;
+
+layout {
+  load, subptr_lo, subptr_hi: addr;
+  gate_ctrl, gateoff_ctrl: byte;
+}
+
+cell sid: u8[32] @ 0xD400 out;
+cell zp_lo: u8 @ 0xFB scratch;
+cell zp_hi: u8 @ 0xFC scratch;
+
+cell ftab: u8[192] @ L.load + 0x21F ro;
+cell subtab_lo: u8[128] @ L.subptr_lo ro;
+cell subtab_hi: u8[128] @ L.subptr_hi ro;
+
+cell tempo: u8 @ L.load + 0x2F4;
+cell tempo_reload: u8 @ L.load + 0x2F5;
+cell gate_ctrs: u8[3] @ L.load + 0x2F9;
+
+machine enter {
+  signal lo: u8 = 0;
+  signal hi: u8 = 0;
+  step {
+    lo := zp_lo;
+    hi := zp_hi;
+  }
+}
+
+machine leave {
+  step {
+    zp_lo := enter.lo;
+    zp_hi := enter.hi;
+  }
+}
+
+machine voice[x in 0..3] {
+  cell vtranspose: u8 @ L.load + 0x00A + x;
+  cell detune: u8 @ L.load + 0x00D + x;
+  cell cur_lo: u8 @ L.load + 0x2DF + x;
+  cell cur_hi: u8 @ L.load + 0x2E2 + x;
+  cell base_lo: u8 @ L.load + 0x2E5 + x;
+  cell base_hi: u8 @ L.load + 0x2E8 + x;
+  cell save_lo: u8 @ L.load + 0x2EB + x;
+  cell save_hi: u8 @ L.load + 0x2EE + x;
+  cell sid_off: u8 @ L.load + 0x2F1 + x;
+  cell gate_reload: u8 @ L.load + 0x2F6 + x;
+  cell gate_flag: u8 @ L.load + 0x2FC + x;
+  cell freq_lo: u8 @ L.load + 0x2FF + x;
+  cell freq_hi: u8 @ L.load + 0x302 + x;
+  cell transpose: u8 @ L.load + 0x305 + x;
+  cell depth: u8 @ L.load + 0x308 + x;
+
+  proc inc_fb() {
+    zp_lo += 1;
+    if zp_lo == 0 {
+      zp_hi += 1;
+    }
+  }
+
+  proc note_advance() {
+    let st: u8 = 1;
+    let bv: u8 = 0;
+    while st != 0 bound 4096 {
+      if st == 1 {
+        gate_ctrs[x] := gate_reload;
+        st := 2;
+      } elif st == 2 {
+        if depth == 0 {
+          st := 3;
+        } else {
+          st := 5;
+        }
+      } elif st == 3 {
+        bv := ind(0xFB, 0);
+        if bv < 0x80 {
+          save_lo := zp_lo;
+          save_hi := zp_hi;
+          zp_lo := subtab_lo[u16(bv)];
+          zp_hi := subtab_hi[u16(bv)];
+          depth += 1;
+          st := 5;
+        } elif (bv & 0xE0) != 0x80 {
+          st := 4;
+        } else {
+          transpose := ((bv & 0x1F) - 0x0C) << 1;
+          inc_fb();
+          st := 3;
+        }
+      } elif st == 4 {
+        zp_lo := base_lo;
+        zp_hi := base_hi;
+        st := 1;
+      } elif st == 5 {
+        bv := ind(0xFB, 0);
+        if bv >= 0x80 {
+          st := 8;
+        } else {
+          let c = bv << 1;
+          if c == 0 {
+            st := 6;
+          } elif c == 0xFE {
+            st := 7;
+          } else {
+            let idx = c + vtranspose + transpose;
+            let cy = carry(ftab[u16(idx)], detune);
+            freq_lo := ftab[u16(idx)] + detune;
+            freq_hi := ftab[u16(idx) + 1] + u8(cy);
+            gate_flag := 0;
+            st := 11;
+          }
+        }
+      } elif st == 6 {
+        sid[u16(sid_off) + 4] := L.gateoff_ctrl;
+        st := 7;
+      } elif st == 7 {
+        gate_flag := 1;
+        st := 11;
+      } elif st == 8 {
+        if (bv & 0xF0) == 0x80 {
+          gate_ctrs[x] := bv & 0x0F;
+          gate_reload := bv & 0x0F;
+          st := 10;
+        } else {
+          st := 9;
+        }
+      } elif st == 9 {
+        depth := 0;
+        zp_lo := save_lo;
+        zp_hi := save_hi;
+        st := 10;
+      } elif st == 10 {
+        inc_fb();
+        st := 2;
+      } else {
+        inc_fb();
+        st := 0;
+      }
+    }
+  }
+
+  step {
+    zp_lo := cur_lo;
+    zp_hi := cur_hi;
+    if neg(gate_ctrs[x]) {
+      note_advance();
+    } else {
+      gate_flag := 1;
+    }
+    if gate_flag == 0 {
+      sid[u16(sid_off) + 4] := L.gate_ctrl;
+    }
+    sid[u16(sid_off)] := freq_lo;
+    sid[u16(sid_off) + 1] := freq_hi;
+    cur_lo := zp_lo;
+    cur_hi := zp_hi;
+  }
+}
+
+machine clock {
+  step {
+    tempo -= 1;
+    if tempo == 0 {
+      tempo := tempo_reload;
+      gate_ctrs[0] -= 1;
+      gate_ctrs[1] -= 1;
+      gate_ctrs[2] -= 1;
+    }
+  }
+}
+
+schedule {
+  enter;
+  voice[2];
+  voice[1];
+  voice[0];
+  clock;
+  leave;
+}

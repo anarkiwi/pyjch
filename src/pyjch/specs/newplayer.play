@@ -152,12 +152,12 @@ machine voice[x in 0..3] {
     let d = nxt - cur;
     vibdeltalo := lo(d);
     scratch := hi(d) + vibbacc;
-    let k: u8 = 0;
-    while k != vibdep bound 16 {
+    let k = vibdep - 1;
+    while !neg(k) bound 128 {
       let val = word(vibdeltalo, scratch) >> 1;
       scratch := hi(val);
       vibdeltalo := lo(val);
-      k += 1;
+      k -= 1;
     }
     vibdwctr -= 1;
     if neg(vibdwctr) {
