@@ -138,6 +138,17 @@ do not show (the saved zero-page pointer, the filter-program start) must match.
 A build that differs there is gated out as `code-differs`; every other recovered
 version plays byte-exactly through `EmuPlayer`, so no tune is silently mis-played.
 
+### Proofs
+
+Besides the oracle runs, `tests/test_specplayer.py` proves with
+`pysidtracker.playspec.tv.validate` that the spec routine `voice[0].inst_init` (the
+instrument start: wave pointer, pulse and filter programs, AD/SR and hard restart)
+leaves exactly what the tune's 6502 code leaves, for all initial memory, in each V20
+oracle tune; a changed spec is refuted with a counterexample that replays. The
+row-advance and pattern-command routines are not proved: both reach the vibrato shift
+loop, a counted loop with an unconditional back-edge that the translation validator
+explores without end.
+
 ## HVSC oracle survey
 
 [`scripts/oracle_hvsc.py`](../scripts/oracle_hvsc.py) plugs `make_player` into the
