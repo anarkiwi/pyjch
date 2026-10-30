@@ -256,12 +256,13 @@ class JchPlayer(SpecPlayer):
     build on :class:`~pysidtracker.EmuPlayer`.  :meth:`~pysidtracker.MemPlayer.play_frame` runs one tick,
     returning the SID register writes; :meth:`~pysidtracker.MemPlayer.render_grid` yields the
     forward-filled 25-register per-frame grid, pulse-width highs nibble-masked as
-    by ``EmuPlayer``.
+    by ``EmuPlayer``.  With ``validate`` each stream the spec opens is parsed
+    against the song grammar; :attr:`~pysidtracker.playspec.SpecPlayer.validator` reports the malformed ones.
     """
 
     MASK_PW_HI = True
 
-    def __init__(self, model, subtune: int = 0):
+    def __init__(self, model, subtune: int = 0, validate: bool = False):
         if isinstance(model, Song):
             self.engine, name, layout = "v0x", "v0x", v0x_layout(model)
         elif isinstance(model, NewPlayerModel):
@@ -282,6 +283,7 @@ class JchPlayer(SpecPlayer):
             model.play_addr,
             subtune,
             bind=lambda view, entry: layout,
+            validate=validate,
         )
 
 

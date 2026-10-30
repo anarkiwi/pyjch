@@ -130,3 +130,40 @@ def test_a_changed_spec_is_refuted_and_the_counterexample_replays(hvsc):
     cex = result.counterexample
     diffs = replay(broken, layout, "voice[0].inst_init", cex["memory"], pc, {"X": 0})
     assert diffs == [cex["address"]]
+
+
+PATTERN_RULE = "pyjch.grammar:GRAMMAR:pattern"
+ORDER_RULE = "pyjch.grammar:GRAMMAR:orderlist"
+
+
+def _validated(model, calls):
+    player = JchPlayer(model, validate=True)
+    player.render_grid(calls)
+    return player.validator
+
+
+def test_every_stream_the_spec_opens_on_the_synthetic_tune_is_well_formed():
+    validator = _validated(_model(), whole_song(SYNTH_FRAMES))
+    assert {ref for ref, _base in validator.results} == {PATTERN_RULE, ORDER_RULE}
+    assert validator.failures() == {}
+
+
+def test_a_pattern_without_a_terminator_is_reported():
+    data = bytearray(synth.build_psid())
+    start = len(data) - (synth.IMAGE_LEN - (synth.PATTERNS - synth.LOAD))
+    data[start : start + 0x100] = bytes([0x30]) * 0x100
+    failures = _validated(
+        reader.parse(bytes(data)), whole_song(SYNTH_FRAMES)
+    ).failures()
+    assert (PATTERN_RULE, synth.PATTERNS) in failures
+    assert {ref for ref, _base in failures} == {PATTERN_RULE}
+    assert all("no terminator" in message for message in failures.values())
+
+
+@pytest.mark.oracle
+@pytest.mark.parametrize("relpath", SPEC_TUNES.values(), ids=list(SPEC_TUNES))
+def test_every_stream_a_real_tune_opens_matches_the_song_grammar(relpath, hvsc):
+    data = hvsc(relpath).read_bytes()
+    validator = _validated(reader.parse(data), song_frames(data, None))
+    assert validator.results
+    assert validator.failures() == {}

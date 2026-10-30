@@ -57,8 +57,10 @@ labels come from it, and `Tune.provenance.variant` records the same facets.
   tune's own 6502 driver on jennings; `.play_frame() -> list[(reg, val)]`,
   `.regs`, `.render_grid(nframes)`. `engine_of(player)` names the playroutine
   (`v0x` / `v20` / `emu`).
-- `JchPlayer(model)` — the V0x / V20 spec player (`.engine`); any other version,
-  or a V20 build that is not `playable`, raises `SidParseError`.
+- `JchPlayer(model, subtune=0, validate=False)` — the V0x / V20 spec player
+  (`.engine`); any other version, or a V20 build that is not `playable`, raises
+  `SidParseError`. With `validate=True` every stream it opens is parsed against the
+  song grammar and `.validator.failures()` lists the malformed ones.
 - `iter_frames(model, max_frames)` — per-frame writes.
 - `render_grid(model, nframes) -> list[list[int]]` — forward-filled grid.
 - `register_writes_from_player` / `read_reglog` / `write_reglog` / `RegWrite`

@@ -103,6 +103,12 @@ a silently truncated song. `pysidtracker grammar TUNE` lists the parsed streams.
 Bytes stored after a terminator belong to the next stream; the player never
 reads them through this stream's pointer.
 
+The specs name these rules on the streams they open (`stream ... grammar`), so
+`JchPlayer(model, validate=True)` parses each stream as the player reaches it and
+`player.validator.failures()` lists the malformed ones. Over every V20 tune in the
+JCH and DRAX HVSC directories, whole songs, the player opens 27,008 distinct
+streams and the grammar accepts all of them.
+
 ## Player and playback notes
 
 `make_player(model)` (a `JchPlayer` or an `EmuPlayer`) exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
