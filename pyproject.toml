@@ -49,7 +49,7 @@ Issues = "https://github.com/anarkiwi/pyjch/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pyjch = ["*.lark"]
+pyjch = ["*.lark", "specs/*.play"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
