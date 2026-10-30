@@ -33,6 +33,15 @@ jobs:
         # The corpus reader/extract/editor tests run on the real HVSC tunes the
         # cache action restores and pre-fetches. Oracle byte-exact tests run in
         # the dedicated ``oracle`` job below.
+        if: matrix.python-version != '3.12'
+        run: pytest --cov=pyjch --cov-report=term-missing --cov-fail-under=85
+      - name: pytest + coverage (> 85%), sysmon
+        # Python 3.12's line tracer slows the generated playspec code about
+        # 1000-fold; the sysmon core avoids it but cannot measure branches there.
+        if: matrix.python-version == '3.12'
+        env:
+          COVERAGE_CORE: sysmon
+          COVERAGE_RCFILE: ci/coverage-sysmon.rc
         run: pytest --cov=pyjch --cov-report=term-missing --cov-fail-under=85
 
   oracle:
