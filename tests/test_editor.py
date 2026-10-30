@@ -384,3 +384,34 @@ def test_read_editor_prg_is_public_api():
     assert pyjch.read_editor_prg is editor.read_editor_prg
     assert pyjch.EditorImage is editor.EditorImage
     assert pyjch.profile_for_magic(b"25.FX") is editor.NP25_PROFILE
+
+
+def test_the_writer_refuses_a_pattern_the_player_could_not_read():
+    tune = _tune()
+    broken = dataclasses.replace(tune, pattern_raw=[[0x30] * 5, *tune.pattern_raw[1:]])
+    with pytest.raises(SidParseError, match="pattern 0"):
+        editor.write_editor_prg(broken, driver=DRIVER, profile=editor.NP20_PROFILE)
+
+
+def test_the_writer_refuses_a_wave_program_that_never_ends():
+    tune = _tune()
+    rows = [0x0C] * len(tune.wavetable.note_col)
+    broken = dataclasses.replace(
+        tune, wavetable=dataclasses.replace(tune.wavetable, note_col=rows)
+    )
+    with pytest.raises(SidParseError, match="wave program"):
+        editor.write_editor_prg(broken, driver=DRIVER, profile=editor.NP20_PROFILE)
+
+
+def test_the_reader_reports_a_sequence_with_no_terminator():
+    profile = editor.NP20_PROFILE
+    prg = bytearray(editor.write_editor_prg(_tune(), driver=DRIVER, profile=profile))
+    _load, word, byte = _image(bytes(prg))
+    lo, hi = word(profile.ptr_addr(profile.idx_seqlo)), word(
+        profile.ptr_addr(profile.idx_seqhi)
+    )
+    first = byte(lo) | (byte(hi) << 8)
+    at = first - profile.load_addr + 2
+    prg[at:] = bytes([0x30]) * (len(prg) - at)
+    with pytest.raises(SidParseError, match="sequence 0"):
+        editor.read_editor_prg(bytes(prg), profile=profile)

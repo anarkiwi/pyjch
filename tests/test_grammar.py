@@ -1,6 +1,7 @@
 """The song-stream grammar: what the player reads, and what it rejects."""
 
 import pytest
+from pysidtracker.bytegrammar import render
 
 from pyjch import grammar, newplayer
 from pyjch.extract import extract
@@ -54,11 +55,55 @@ def test_interleaved_wave_patterns_end_at_ff_and_carry_7f_as_data():
     assert parsed.size == 4
 
 
-def test_records_are_fixed_width():
+def test_an_instrument_is_eight_bytes():
     assert _parse(range(8), grammar.INSTRUMENT).size == 8
-    assert _parse(range(4), grammar.STEP).size == 4
     with pytest.raises(SidParseError):
         _parse(range(7), grammar.INSTRUMENT)
+
+
+def test_a_wave_program_ends_at_a_hold_or_a_jump_and_not_at_a_row():
+    jump = _parse([0x0C, 0x90, 0x10, 0x7F, 0x55], grammar.WAVE_PROGRAM)
+    assert (jump.model.rows, jump.model.end, jump.size) == (b"\x0c\x90\x10", 0x7F, 4)
+    hold = _parse([0x0C, 0x7E], grammar.WAVE_PROGRAM)
+    assert (hold.model.rows, hold.model.end) == (b"\x0c", 0x7E)
+    with pytest.raises(SidParseError, match="no terminator"):
+        _parse([0x0C, 0x0D], grammar.WAVE_PROGRAM)
+
+
+def test_a_command_entry_is_classified_by_the_high_nibble_of_its_first_byte():
+    table = grammar.GRAMMAR.parse_exact(
+        bytes([0x15, 0x01, 0x62, 0x34, 0x92, 0x22, 0xE0, 0x04, 0xF0, 0x1F, 0x50, 0x03]),
+        grammar.COMMAND_TABLE,
+    )
+    assert [kind for kind, _first, _second in table.entries] == [
+        "portamento",
+        "vibrato",
+        "ad",
+        "tempo",
+        "volume",
+        "patch",
+    ]
+
+
+def test_a_table_must_be_whole_steps_or_entries():
+    for rule, width in (
+        (grammar.PULSE_TABLE, 4),
+        (grammar.FILTER_TABLE, 4),
+        (grammar.COMMAND_TABLE, 2),
+    ):
+        assert grammar.GRAMMAR.parse_exact(bytes(width * 3), rule)
+        with pytest.raises(SidParseError):
+            grammar.GRAMMAR.parse_exact(bytes(width * 3 - 1), rule)
+
+
+def test_a_pulse_step_keeps_the_value_at_ff_and_reads_the_direction_from_bit_7():
+    table = grammar.GRAMMAR.parse_exact(
+        bytes([0xFF, 0x08, 0x83, 0x04, 0x20, 0x30, 0x10, 0x00]), grammar.PULSE_TABLE
+    )
+    assert table.steps == ((0xFF, 0x08, 0x83, 0x04), (0x20, 0x30, 0x10, 0x00))
+    listing = "\n".join(render(grammar.GRAMMAR.tree(table.raw, grammar.PULSE_TABLE)))
+    assert "PW_KEEP=$ff" in listing and "PW_DOWN=$83" in listing
+    assert "PW_VALUE=$20" in listing and "PW_UP=$10" in listing
 
 
 def test_extract_rejects_a_pattern_that_never_terminates():

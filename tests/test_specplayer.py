@@ -141,6 +141,7 @@ def test_a_changed_spec_is_refuted_and_the_counterexample_replays(hvsc):
 
 PATTERN_RULE = "pyjch.grammar:GRAMMAR:pattern"
 ORDER_RULE = "pyjch.grammar:GRAMMAR:orderlist"
+WAVE_RULE = "pyjch.grammar:GRAMMAR:wave_program"
 
 
 def _validated(model, calls):
@@ -151,7 +152,11 @@ def _validated(model, calls):
 
 def test_every_stream_the_spec_opens_on_the_synthetic_tune_is_well_formed():
     validator = _validated(_model(), whole_song(SYNTH_FRAMES))
-    assert {ref for ref, _base in validator.results} == {PATTERN_RULE, ORDER_RULE}
+    assert {ref for ref, _base in validator.results} == {
+        PATTERN_RULE,
+        ORDER_RULE,
+        WAVE_RULE,
+    }
     assert validator.failures() == {}
 
 

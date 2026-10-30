@@ -228,6 +228,7 @@ machine voice[x in 0..3] {
       let jt = wave_ctrl[u16(yy)];
       wtptr := jt;
       yy := jt;
+      stream program = L.wave_note + u16(jt) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
       a := wave_note[u16(yy)];
       hinote := neg(a);
     }
@@ -255,6 +256,7 @@ machine voice[x in 0..3] {
         let jt = wave_ctrl[u16(yy)];
         wtptr := jt;
         yy := jt;
+        stream program = L.wave_note + u16(jt) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
       }
       fhi := wave_note[u16(yy)];
       flo := 0;
@@ -368,6 +370,7 @@ machine voice[x in 0..3] {
         let ws2 = inst[u16(instn) + 7];
         if ws2 != inst[u16(instn) + 6] {
           wtptr := ws2;
+          stream program = L.wave_note + u16(wtptr) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
         }
       }
       after();
@@ -470,6 +473,7 @@ machine voice[x in 0..3] {
   proc inst_init() {
     let y = instn;
     wtptr := inst[u16(y) + 6];
+    stream program = L.wave_note + u16(wtptr) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
     let wf = inst[u16(y) + 2];
     instflag := wf & 0x80;
     wtdw := wf & 0x0F;

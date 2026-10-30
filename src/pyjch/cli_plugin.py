@@ -61,24 +61,7 @@ def _streams(model) -> Iterator[Stream]:
         return
     if not isinstance(model, NewPlayerModel):
         return
-    tune = extract(model)
-    parse = grammar.GRAMMAR.parse_exact
-    rule = grammar.pattern_rule(model)
-    for index, sub in enumerate(tune.subtunes):
-        for voice, order in enumerate(sub.order_lists):
-            yield (
-                f"order list {index}.{voice}",
-                parse(bytes(order.raw), grammar.ORDERLIST),
-                grammar.ORDERLIST,
-            )
-    for index, raw in enumerate(tune.pattern_raw):
-        yield f"pattern {index}", parse(bytes(raw), rule), rule
-    for index, inst in enumerate(tune.instruments):
-        yield (
-            f"instrument {index}",
-            parse(bytes(inst.raw), grammar.INSTRUMENT),
-            grammar.INSTRUMENT,
-        )
+    yield from grammar.tune_streams(extract(model), grammar.pattern_rule(model))
 
 
 def _tune_json(model) -> bytes:

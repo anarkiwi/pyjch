@@ -32,5 +32,38 @@ V0X_DURATION: /[\x80-\x8f]/
 V0X_RETURN: /[\x90-\xff]/
 v0x_subpattern: (V0X_REST | V0X_NOTE | V0X_TIE | V0X_DURATION)* V0X_RETURN _TAIL?
 
-instrument: BYTE~8
-step: BYTE~4
+AD: /[\x00-\xff]/
+SR: /[\x00-\xff]/
+WAVE_FLAGS: /[\x00-\xff]/
+FILTER_MODE: /[\x00-\xff]/
+FILTER_START: /[\x00-\xff]/
+PULSE_START: /[\x00-\xff]/
+WAVE_START: /[\x00-\xff]/
+WAVE_ALT: /[\x00-\xff]/
+instrument: AD SR WAVE_FLAGS FILTER_MODE FILTER_START PULSE_START WAVE_START WAVE_ALT
+
+WAVE_ROW: /[\x00-\x7d\x80-\xff]/
+WAVE_HOLD: /\x7e/
+WAVE_JUMP: /\x7f/
+wave_program: WAVE_ROW* (WAVE_HOLD | WAVE_JUMP) _TAIL?
+
+PW_KEEP: /\xff/
+PW_VALUE: /[\x00-\xfe]/
+PW_UP: /[\x00-\x7f]/
+PW_DOWN: /[\x80-\xff]/
+_pulse_step: (PW_KEEP | PW_VALUE) BYTE (PW_UP | PW_DOWN) BYTE
+pulse_table: _pulse_step+
+
+FILTER_KEEP: /\xff/
+FILTER_VALUE: /[\x00-\xfe]/
+_filter_step: (FILTER_KEEP | FILTER_VALUE) BYTE BYTE BYTE
+filter_table: _filter_step+
+
+CMD_PORTAMENTO: /[\x00-\x2f]/
+CMD_VIBRATO: /[\x60-\x6f]/
+CMD_AD: /[\x90-\x9f]/
+CMD_TEMPO: /[\xe0-\xef]/
+CMD_VOLUME: /[\xf0-\xff]/
+CMD_PATCH: /[\x30-\x5f\x70-\x8f\xa0-\xdf]/
+command: (CMD_PORTAMENTO | CMD_VIBRATO | CMD_AD | CMD_TEMPO | CMD_VOLUME | CMD_PATCH) BYTE
+command_table: command+

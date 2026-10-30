@@ -169,17 +169,13 @@ def _slice(model, base: int, end: int) -> List[int]:
     return out
 
 
-def _records(raw: List[int], cls):
+def _records(raw: List[int], cls, rule: str):
     """4-byte records over ``raw``, trailing all-zero records trimmed (min 1)."""
     count = len(raw) // 4
-    recs = [
-        cls(
-            *grammar.GRAMMAR.parse_exact(
-                bytes(raw[i * 4 : i * 4 + 4]), grammar.STEP
-            ).raw
-        )
-        for i in range(count)
-    ]
+    if not count:
+        return []
+    table = grammar.GRAMMAR.parse_exact(bytes(raw[: count * 4]), rule)
+    recs = [cls(*step) for step in table.steps]
     zero = cls(0, 0, 0, 0)
     while len(recs) > 1 and recs[-1] == zero:
         recs.pop()
@@ -215,7 +211,12 @@ def _collect(model, cmdparam: Optional[int]):
     inst_ref: Set[int] = {0}
     cmd_ref: Set[int] = set()
     for idx in range(max_pat + 1):
-        events, raw = _decode_pattern(model, model.pattern_ptr(idx), cmdparam, idx)
+        try:
+            events, raw = _decode_pattern(model, model.pattern_ptr(idx), cmdparam, idx)
+        except SidParseError:
+            if idx in pat_idx:
+                raise
+            events, raw = [], []
         patterns.append(events)
         pattern_raw.append(raw)
         for event in events:
@@ -414,7 +415,7 @@ def _extract_tune(model, bases: Optional[V20Bases]) -> Tune:
         provenance = Provenance(
             "v20", model.version, asdict(bases), variant=_variant_info(model)
         )
-    return Tune(
+    tune = Tune(
         name=model.name,
         author=model.author,
         released=model.released,
@@ -427,13 +428,16 @@ def _extract_tune(model, bases: Optional[V20Bases]) -> Tune:
         pattern_raw=pattern_raw,
         instruments=_instruments(model, model.instruments, end, all_bases, inst_ref),
         wavetable=wavetable,
-        pw_program=_records(pw, PwStep),
-        filter_program=_records(filt, FilterStep),
+        pw_program=_records(pw, PwStep, grammar.PULSE_TABLE),
+        filter_program=_records(filt, FilterStep, grammar.FILTER_TABLE),
         groove=filt[:2],
         pitch_table=pitch,
         commands=commands,
         provenance=provenance,
     )
+    for _stream in grammar.wave_streams(tune):
+        pass
+    return tune
 
 
 def extract(model) -> Tune:
