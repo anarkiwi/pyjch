@@ -7,7 +7,8 @@ a dedicated CI job runs ``pytest -m oracle``.  Never skipped: an unavailable
 tune or a failed oracle render fails the test.  HVSC ``.sid`` files are
 copyright works -- cached or read from a local tree, never committed.
 
-Every recovered JCH NewPlayer driver version is covered, at 60 seconds each:
+Every recovered JCH NewPlayer driver version is covered, over each tune's whole
+length (its HVSC Songlengths entry):
 
 * **V0x** (a :class:`Song`) and **V20** (a :class:`NewPlayerModel`) render
   through their native pure-Python engines;
@@ -23,11 +24,10 @@ SID registers only every few frames.
 import oracle_hvsc
 import pytest
 from pysidtracker import aligned_match, cycles_per_frame_for_flags
-from pysidtracker.oracle import play_calls
 from pysidtracker.image import SidImage
 
 # One+ HVSC representative per recovered JCH NewPlayer driver version, each
-# verified to render register-exact against the sidtrace oracle over 60 s.
+# verified to render register-exact against the sidtrace oracle over its whole song.
 #   V0x        -> pyjch.model.Song native engine (FUN_1060/FUN_10e8)
 #   V20        -> pyjch.newplayer.NewPlayerModel native two-column engine
 #                 (24th_Amaranth_Grand_Prix_3 is the DRAX worktune V20 RE ref)
@@ -51,22 +51,15 @@ TUNES = {
     "v17_1st_chaff": "DEMOS/0-9/1st_Chaff.sid",
     "v18_bambino": "MUSICIANS/A/Avalon/Bambino.sid",
 }
-SECONDS = 60
-RENDER_MARGIN = 2
 
 
 @pytest.mark.oracle
 @pytest.mark.parametrize("relpath", list(TUNES.values()), ids=list(TUNES))
 def test_render_matches_oracle(relpath, hvsc, sidtrace_oracle):
-    """The player reproduces the sidtrace oracle register-for-register, 60 s."""
+    """The player reproduces the sidtrace oracle register-for-register, whole song."""
     path = hvsc(relpath)
     data = path.read_bytes()
     cycles = cycles_per_frame_for_flags(SidImage.from_bytes(data).header.flags)
-    oracle = sidtrace_oracle(
-        path,
-        frames=play_calls(path, SECONDS),
-        seconds=SECONDS + RENDER_MARGIN,
-        cycles_per_frame=cycles,
-    )
+    oracle = sidtrace_oracle(path, frames=None, cycles_per_frame=cycles)
     rendered = oracle_hvsc.render(data, 1, len(oracle) + 4)[0].tolist()
     assert aligned_match(oracle, rendered, max_lead=4), f"{relpath}: render != oracle"

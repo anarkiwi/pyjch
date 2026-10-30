@@ -28,11 +28,13 @@ from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
 from pyjch.player import (
     JchPlayer,
+    V20Player,
     engine_of,
     iter_frames,
     make_player,
     playable,
     render_grid,
+    v20_layout,
 )
 
 from tests import _synth_v20 as synth
@@ -56,11 +58,18 @@ def test_v0x_model_selects_v0x(relpath, hvsc):
 
 
 def test_v20_model_selects_v20():
-    """A playable NewPlayerModel drives the V20 engine."""
+    """A playable NewPlayerModel is played by the V20 spec player."""
     model = _v20_model()
     assert isinstance(model, NewPlayerModel)
     assert playable(model) is not None
-    assert JchPlayer(model).engine == "v20"
+    player = make_player(model)
+    assert isinstance(player, V20Player)
+    assert engine_of(player) == "v20"
+
+
+def test_jch_player_plays_only_v0x():
+    with pytest.raises(SidParseError, match="V0x Song"):
+        JchPlayer(_v20_model())
 
 
 def test_unknown_model_type_rejected():
@@ -112,7 +121,7 @@ def test_v0x_loops_forever_until_max_frames(relpath, hvsc):
 def test_hard_restart_immediate_selected_per_build():
     model = reader.parse(synth.build_psid(hard_restart=0x11))
     assert playable(model).hardrestart == 0x11
-    assert JchPlayer(model).engine == "v20"
+    assert v20_layout(model, playable(model))["hardrestart"] == 0x11
 
 
 @pytest.mark.parametrize(
@@ -140,20 +149,20 @@ def test_non_v20_family_falls_back_to_emulation(idiom):
         model.image, model.load_addr, model.init_addr, model.play_addr, 1
     )
     assert player.render_grid(8) == reference.render_grid(8)
-    with pytest.raises(SidParseError, match="no native engine"):
-        JchPlayer(model)
+    with pytest.raises(SidParseError, match="no V20 spec"):
+        V20Player(model)
 
 
-def test_make_player_keeps_the_native_engines():
-    model = _v20_model()
-    player = make_player(model)
+@pytest.mark.parametrize("relpath", V0X_REFERENCES)
+def test_make_player_keeps_the_native_v0x_engine(relpath, hvsc):
+    player = make_player(reader.read(hvsc(relpath)))
     assert isinstance(player, JchPlayer)
-    assert engine_of(player) == player.engine == "v20"
+    assert engine_of(player) == player.engine == "v0x"
 
 
-def test_native_snapshot_masks_pulse_width_high():
-    """The native engines nibble-mask PW-hi in the grid, as EmuPlayer does."""
-    player = JchPlayer(_v20_model())
+def test_native_snapshot_masks_pulse_width_high(hvsc):
+    """The native engine nibble-masks PW-hi in the grid, as EmuPlayer does."""
+    player = JchPlayer(reader.read(hvsc(V0X_REFERENCES[0])))
     for reg in (0x03, 0x0A, 0x11):
         player._wr(0xD400 + reg, 0xF0 | reg)  # pylint: disable=protected-access
     regs = player.snapshot()

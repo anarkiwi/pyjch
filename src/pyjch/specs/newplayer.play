@@ -1,0 +1,556 @@
+spec newplayer;
+
+layout {
+  cb, pitch, subtune, wave_note, wave_ctrl, filterprog, pwprog, instruments: addr;
+  patlo, pathi, cmdparam, rearm_ad, rearm_sr: addr;
+  hardrestart: byte;
+}
+
+cell sid: u8[32] @ 0xD400 out;
+cell zp_lo: u8 @ 0xFB;
+cell zp_hi: u8 @ 0xFC;
+
+cell pitch: u8[260] @ L.pitch ro;
+cell wave_note: u8[256] @ L.wave_note ro;
+cell wave_ctrl: u8[256] @ L.wave_ctrl ro;
+cell fprog: u8[260] @ L.filterprog ro;
+cell pwprog: u8[260] @ L.pwprog ro;
+cell cmdparam: u8[128] @ L.cmdparam ro;
+cell patlo: u8[256] @ L.patlo ro;
+cell pathi: u8[256] @ L.pathi ro;
+cell inst: u8[256] @ L.instruments;
+cell rearm_ad: u8 @ L.rearm_ad ro;
+cell rearm_sr: u8 @ L.rearm_sr ro;
+
+cell vol: u8 @ L.cb + 0x009;
+cell resfilt: u8 @ L.cb + 0x00A;
+cell scratch: u8 @ L.cb + 0x00B scratch;
+cell idflag: u8 @ L.cb + 0x020;
+cell vibdeltalo: u8 @ L.cb + 0x72D;
+cell tempo_rel: u8 @ L.cb + 0x747;
+cell grv_ctr: u8 @ L.cb + 0x746;
+cell grv_idx: u8 @ L.cb + 0x794;
+cell flt_cur: u8 @ L.cb + 0x790;
+cell flt_dw: u8 @ L.cb + 0x791;
+cell flt_cut: u8 @ L.cb + 0x792;
+cell flt_mode: u8 @ L.cb + 0x793;
+cell delay_en: u8 @ L.cb + 0x7CA;
+
+machine clock {
+  step {
+    grv_ctr -= 1;
+    if neg(grv_ctr) {
+      grv_ctr := tempo_rel;
+      if tempo_rel < 2 {
+        grv_ctr := fprog[u16(grv_idx)];
+        grv_idx -= 1;
+        if neg(grv_idx) {
+          grv_idx := 1;
+        }
+      }
+    }
+  }
+}
+
+machine voice[x in 0..3] {
+  cell active: u8 @ L.cb + 0x006 + x;
+  cell flo: u8 @ L.cb + 0x00C + x;
+  cell fhi: u8 @ L.cb + 0x00F + x;
+  cell note: u8 @ L.cb + 0x014 + x;
+  cell oct: u8 @ L.cb + 0x017 + x;
+  cell gatemask: u8 @ L.cb + 0x01A + x;
+  cell instn: u8 @ L.cb + 0x01D + x;
+  cell ordlo: u8 @ L.cb + 0x72E + x;
+  cell ordhi: u8 @ L.cb + 0x731 + x;
+  cell rstlo: u8 @ L.cb + 0x734 + x;
+  cell rsthi: u8 @ L.cb + 0x737 + x;
+  cell routeset: u8 @ L.cb + 0x73A + x;
+  cell routeclr: u8 @ L.cb + 0x73D + x;
+  cell stride: u8 @ L.cb + 0x740 + x;
+  cell fine: u8 @ L.cb + 0x743 + x;
+  cell ndelay: u8 @ L.cb + 0x748 + x;
+  cell viben: u8 @ L.cb + 0x74B + x;
+  cell portaen: u8 @ L.cb + 0x74E + x;
+  cell patcur: u8 @ L.cb + 0x751 + x;
+  cell instflag: u8 @ L.cb + 0x754 + x;
+  cell ndurrel: u8 @ L.cb + 0x757 + x;
+  cell ndur: u8 @ L.cb + 0x75A + x;
+  cell ctrlsh: u8 @ L.cb + 0x75D + x;
+  cell portapend: u8 @ L.cb + 0x760 + x;
+  cell viben2: u8 @ L.cb + 0x763 + x;
+  cell vibsup: u8 @ L.cb + 0x766 + x;
+  cell vibdwctr: u8 @ L.cb + 0x769 + x;
+  cell vibdwrel: u8 @ L.cb + 0x76C + x;
+  cell vibbstep: u8 @ L.cb + 0x76F + x;
+  cell vibbacc: u8 @ L.cb + 0x772 + x;
+  cell vibdir: u8 @ L.cb + 0x775 + x;
+  cell vibacclo: u8 @ L.cb + 0x778 + x;
+  cell vibacchi: u8 @ L.cb + 0x77B + x;
+  cell vibdep: u8 @ L.cb + 0x77E + x;
+  cell pwcur: u8 @ L.cb + 0x781 + x;
+  cell pwdw: u8 @ L.cb + 0x784 + x;
+  cell pwacclo: u8 @ L.cb + 0x787 + x;
+  cell pwacchi: u8 @ L.cb + 0x78A + x;
+  cell pwdir: u8 @ L.cb + 0x78D + x;
+  cell wtptr: u8 @ L.cb + 0x795 + x;
+  cell wtdw: u8 @ L.cb + 0x798 + x;
+  cell wtdwrel: u8 @ L.cb + 0x79B + x;
+  cell portaslo: u8 @ L.cb + 0x79E + x;
+  cell portashi: u8 @ L.cb + 0x7A1 + x;
+  cell portadir: u8 @ L.cb + 0x7A4 + x;
+  cell portaacclo: u8 @ L.cb + 0x7A7 + x;
+  cell portaacchi: u8 @ L.cb + 0x7AA + x;
+  cell stgtr: u8 @ L.cb + 0x7AD + x;
+  cell stginst: u8 @ L.cb + 0x7B0 + x;
+  cell stgnote: u8 @ L.cb + 0x7B3 + x;
+  cell stgpen: u8 @ L.cb + 0x7B6 + x;
+  cell stgven: u8 @ L.cb + 0x7B9 + x;
+  cell stggate: u8 @ L.cb + 0x7BC + x;
+  cell adsh: u8 @ L.cb + 0x7BF + x;
+  cell srsh: u8 @ L.cb + 0x7C2 + x;
+  cell adovr: u8 @ L.cb + 0x7C5 + x;
+
+  proc blit() {
+    portapend := 0;
+    viben2 := 0;
+    vibsup := 0;
+    sid[u16(stride) + 2] := pwacclo;
+    sid[u16(stride) + 3] := pwacchi;
+    sid[0x16] := flt_cut;
+    sid[u16(stride)] := flo;
+    sid[u16(stride) + 1] := fhi;
+    sid[u16(stride) + 5] := adsh;
+    sid[u16(stride) + 6] := srsh;
+    sid[u16(stride) + 4] := ctrlsh & gatemask;
+    sid[0x18] := flt_mode | vol;
+  }
+
+  proc vibrato() {
+    if vibsup != 0 || viben == 0 {
+      blit();
+      return;
+    }
+    let idx = note << 1;
+    let cur = word(pitch[u16(idx)], pitch[u16(idx) + 1]);
+    let nxt = word(pitch[u16(idx) + 2], pitch[u16(idx) + 3]);
+    let d = nxt - cur;
+    vibdeltalo := lo(d);
+    scratch := hi(d) + vibbacc;
+    let k: u8 = 0;
+    while k != vibdep bound 16 {
+      let val = word(vibdeltalo, scratch) >> 1;
+      scratch := hi(val);
+      vibdeltalo := lo(val);
+      k += 1;
+    }
+    vibdwctr -= 1;
+    if neg(vibdwctr) {
+      vibdir ^= 1;
+      vibdwctr := vibdwrel;
+    }
+    if vibdir != 0 {
+      let bw = borrow(vibacclo, vibdeltalo);
+      vibacclo -= vibdeltalo;
+      vibacchi := vibacchi - scratch - u8(bw);
+    } else {
+      let cy = carry(vibacclo, vibdeltalo);
+      vibacclo += vibdeltalo;
+      vibacchi := vibacchi + scratch + u8(cy);
+    }
+    let cy2 = carry(flo, vibacclo);
+    flo += vibacclo;
+    fhi := fhi + vibacchi + u8(cy2);
+    vibbacc += vibbstep;
+    blit();
+  }
+
+  proc porta() {
+    if portaen == 0 {
+      vibrato();
+      return;
+    }
+    if portadir != 0 {
+      let bw = borrow(portaacclo, portaslo);
+      portaacclo -= portaslo;
+      portaacchi := portaacchi - portashi - u8(bw);
+    } else {
+      let cy = carry(portaacclo, portaslo);
+      portaacclo += portaslo;
+      portaacchi := portaacchi + portashi + u8(cy);
+    }
+    if scratch == 0 {
+      let cy2 = carry(flo, portaacclo);
+      flo += portaacclo;
+      fhi := fhi + portaacchi + u8(cy2);
+    }
+    blit();
+  }
+
+  proc ctrl() {
+    ctrlsh := wave_ctrl[u16(wtptr)];
+    wtdw -= 1;
+    if neg(wtdw) {
+      wtdw := wtdwrel;
+      wtptr += 1;
+    }
+    porta();
+  }
+
+  proc freq_note() {
+    let yy = wtptr;
+    let nb = wave_note[u16(yy)];
+    let a = nb;
+    let hinote = false;
+    if neg(nb) {
+      hinote := true;
+    } elif nb == 0x7E {
+      wtptr -= 1;
+      yy := yy - 1;
+      a := wave_note[u16(yy)];
+      hinote := neg(a);
+    } elif nb == 0x7F {
+      let jt = wave_ctrl[u16(yy)];
+      wtptr := jt;
+      yy := jt;
+      a := wave_note[u16(yy)];
+      hinote := neg(a);
+    }
+    let idx: u8 = 0;
+    if hinote {
+      idx := a << 1;
+      scratch := 1;
+    } else {
+      idx := ((a + note) << 1) + oct;
+      scratch := 0;
+    }
+    let cy = carry(pitch[u16(idx)], fine);
+    flo := pitch[u16(idx)] + fine;
+    fhi := pitch[u16(idx) + 1] + u8(cy);
+  }
+
+  proc freq() {
+    if (inst[u16(instn) + 2] & 0x40) != 0 {
+      let yy = wtptr;
+      let nb = wave_note[u16(yy)];
+      if nb == 0x7E {
+        wtptr -= 1;
+        yy := yy - 1;
+      } elif nb == 0x7F {
+        let jt = wave_ctrl[u16(yy)];
+        wtptr := jt;
+        yy := jt;
+      }
+      fhi := wave_note[u16(yy)];
+      flo := 0;
+    } else {
+      freq_note();
+    }
+    ctrl();
+  }
+
+  proc filt_sweep() {
+    flt_dw -= 1;
+    if neg(flt_dw) {
+      let nxt = fprog[u16(flt_cur) + 3];
+      flt_cur := nxt;
+      flt_dw := fprog[u16(nxt) + 2];
+      let rv = fprog[u16(nxt)];
+      if rv != 0xFF {
+        flt_cut := rv;
+      }
+    }
+    flt_cut += fprog[u16(flt_cur) + 1];
+  }
+
+  proc engine() {
+    pwdw -= 1;
+    if neg(pwdw) {
+      let nxt = pwprog[u16(pwcur) + 3];
+      pwcur := nxt;
+      let dr = pwprog[u16(nxt) + 2];
+      pwdir := dr & 0x80;
+      pwdw := dr & 0x7F;
+      let rs = pwprog[u16(nxt)];
+      if rs != 0xFF {
+        pwacclo := rs & 0xF0;
+        pwacchi := rs & 0x0F;
+      }
+    }
+    let step = pwprog[u16(pwcur) + 1];
+    if pwdir == 0 {
+      let cy = carry(pwacclo, step);
+      pwacclo += step;
+      pwacchi += u8(cy);
+    } else {
+      let bw = borrow(pwacclo, step);
+      pwacclo -= step;
+      pwacchi -= u8(bw);
+    }
+    if x == fprog[3] {
+      filt_sweep();
+    }
+    freq();
+  }
+
+  proc delayed() {
+    if delay_en != 0 {
+      vibsup := 1;
+      freq();
+    } else {
+      engine();
+    }
+  }
+
+  proc not_endpat() {
+    if ndelay != 0 {
+      delayed();
+      return;
+    }
+    gatemask := 0xFE;
+    if instflag != 0 {
+      sid[u16(stride) + 5] := rearm_ad;
+      adsh := rearm_ad;
+      sid[u16(stride) + 6] := rearm_sr;
+      srsh := rearm_sr;
+      blit();
+      return;
+    }
+    delayed();
+  }
+
+  proc after() {
+    patcur += 1;
+    let nb = ind(0xFB, patcur);
+    if nb == 0x7F {
+      patcur := 0;
+      let cy = carry(ordlo, 1);
+      ordlo += 1;
+      zp_lo := ordlo;
+      ordhi += u8(cy);
+      zp_hi := ordhi;
+      let nxt = ind(0xFB, 0);
+      let aval = nxt;
+      if nxt == 0xFF {
+        ordlo := rstlo;
+        ordhi := rsthi;
+        aval := rsthi;
+      }
+      if aval == 0xFE {
+        active := 0;
+        sid[u16(stride) + 4] := 0;
+        return;
+      }
+    }
+    not_endpat();
+  }
+
+  proc note_byte(b: u8) {
+    if b == 0 {
+      ndelay += 1;
+      if gatemask != 0xFE {
+        stggate := 0xFE;
+        let ws2 = inst[u16(instn) + 7];
+        if ws2 != inst[u16(instn) + 6] {
+          wtptr := ws2;
+        }
+      }
+      after();
+      return;
+    }
+    if b == 0x7E {
+      ndelay += 1;
+      stggate := 0xFF;
+      after();
+      return;
+    }
+    stgnote := b;
+    if portapend == 0 {
+      stgpen := 0;
+    }
+    if viben2 == 0 {
+      stgven := 0;
+    }
+    stggate := 0xFF;
+    after();
+  }
+
+  proc command(a: u8) {
+    let hi5 = a & 0xE0;
+    if hi5 == 0x80 {
+      ndelay := a & 0x10;
+      ndurrel := a & 0x0F;
+    } elif hi5 == 0xA0 {
+      let staged = a << 3;
+      stginst := staged;
+      adovr := inst[u16(staged) + 1];
+    } else {
+      let yidx = (a & 0x3F) << 1;
+      let paramlo = cmdparam[u16(yidx)];
+      scratch := paramlo & 0x0F;
+      let phi = paramlo & 0xF0;
+      let paramhi = cmdparam[u16(yidx) + 1];
+      if phi < 0x30 {
+        portadir := phi & 0x20;
+        portashi := scratch;
+        portaslo := paramhi;
+        stgpen := 1;
+        portapend := 1;
+      } elif phi == 0x60 {
+        stgven := 1;
+        viben2 := 1;
+        vibbstep := scratch;
+        let sp = paramhi >> 4;
+        vibdwrel := sp;
+        vibdwctr := sp - 1;
+        vibdir := 0;
+        vibbacc := 0;
+        vibacclo := 0;
+        vibacchi := 0;
+        vibdep := paramhi & 0x0F;
+      } elif phi == 0xE0 {
+        tempo_rel := paramhi;
+      } elif phi == 0xF0 {
+        vol := paramhi;
+      } elif phi == 0x90 {
+        adovr := paramhi;
+      } else {
+        let yy = (paramlo & 0x1F) << 3;
+        inst[u16(yy) + 6] := paramhi;
+        inst[u16(yy) + 7] := paramhi;
+      }
+    }
+    patcur += 1;
+  }
+
+  proc fetch() {
+    zp_lo := ordlo;
+    zp_hi := ordhi;
+    ndelay := 0;
+    let a = ind(0xFB, 0);
+    if neg(a) {
+      stgtr := a << 1;
+      let lo1 = ordlo + 1;
+      if lo1 == 0 {
+        ordhi += 1;
+      }
+      ordlo := lo1;
+      a := ind(0xFB, 1);
+    }
+    zp_lo := patlo[u16(a)];
+    zp_hi := pathi[u16(a)];
+    while true bound 256 {
+      let byte = ind(0xFB, patcur);
+      if neg(byte) {
+        command(byte);
+      } else {
+        note_byte(byte);
+        return;
+      }
+    }
+  }
+
+  proc inst_init() {
+    let y = instn;
+    wtptr := inst[u16(y) + 6];
+    let wf = inst[u16(y) + 2];
+    instflag := wf & 0x80;
+    wtdw := wf & 0x0F;
+    wtdwrel := wf & 0x0F;
+    let pwstart = inst[u16(y) + 5];
+    pwcur := pwstart;
+    let pr = pwprog[u16(pwstart)];
+    if pr != 0xFF {
+      pwacclo := pr & 0xF0;
+      pwacchi := pr & 0x0F;
+    }
+    let dr = pwprog[u16(pwstart) + 2];
+    pwdir := dr & 0x80;
+    pwdw := dr & 0x7F;
+    let fm = inst[u16(y) + 3];
+    scratch := fm & 0xF0;
+    let route = fm & 0x0F;
+    let yflag: u8 = 0;
+    let a: u8 = 0;
+    if route == 0 {
+      a := resfilt & routeclr;
+    } elif route == 0x08 {
+      yflag := 1;
+      a := resfilt & routeclr;
+    } else {
+      flt_mode := route << 4;
+      sid[0x18] := (route << 4) | vol;
+      yflag := 1;
+      a := (resfilt & 0x0F) | routeset | scratch;
+      if a == 0 {
+        yflag := 2;
+        a := resfilt & routeclr;
+      }
+    }
+    sid[0x17] := a;
+    resfilt := a;
+    if yflag == 1 {
+      let fp = inst[u16(y) + 4];
+      flt_cur := fp;
+      let rv = fprog[u16(fp)];
+      if rv != 0xFF {
+        flt_cut := rv;
+      }
+      flt_dw := fprog[u16(fp) + 2];
+    }
+    let ad = inst[u16(y)];
+    sid[u16(stride) + 5] := ad;
+    adsh := ad;
+    let sr = adovr;
+    sid[u16(stride) + 6] := sr;
+    srsh := sr;
+    sid[u16(stride) + 4] := L.hardrestart;
+  }
+
+  proc commit() {
+    gatemask := stggate;
+    note := stgnote;
+    oct := stgtr;
+    viben := stgven;
+    instn := stginst;
+    portaen := stgpen;
+    if stgpen == 0 {
+      portaacclo := 0;
+      portaacchi := 0;
+    }
+    ndur := ndurrel;
+    if ndelay != 0 {
+      engine();
+    } else {
+      inst_init();
+    }
+  }
+
+  step {
+    if active == 0 {
+      return;
+    }
+    if grv_ctr == 0 {
+      ndur -= 1;
+      if neg(ndur) {
+        commit();
+      } else {
+        engine();
+      }
+    } elif grv_ctr == 2 {
+      if ndur == 0 {
+        fetch();
+      } else {
+        engine();
+      }
+    } else {
+      engine();
+    }
+  }
+}
+
+schedule {
+  clock;
+  voice[2];
+  voice[1];
+  voice[0];
+}

@@ -29,6 +29,7 @@ CMDPARAM = 0x19E0
 ORDER = (0x1A00, 0x1A10, 0x1A20)
 PATTERNS = 0x1A40  # pattern N base = PATTERNS + N*0x10
 IMAGE_LEN = 0x1B00
+INIT_AT = 0x400  # image offset of the executable init routine
 
 
 def _w(addr):
@@ -65,7 +66,9 @@ def _fragments():
 def build_image(hard_restart=0x09):
     """Return ``(image_bytes, load)`` for a coherent synthetic V20 tune."""
     img = bytearray(IMAGE_LEN)
-    img[0x000:0x006] = b"\x4c\x06\x10\x4c\x09\x10"  # JMP init ; JMP play vectors
+    img[0x000:0x006] = (
+        b"\x4c" + _w(LOAD + INIT_AT) + b"\x4c\x09\x10"
+    )  # JMP init ; JMP play
     img[0x006:0x009] = b"\x01\x01\x01"  # voice ACTIVE flags
     img[0x00A] = 0xF0  # RES/FILT accumulator seed
     img[0x020] = 0x00  # id-string flag = 0 -> skip optional init block
@@ -120,7 +123,32 @@ def build_image(hard_restart=0x09):
     put(ORDER[0], b"\x00\x01\x04\xff")
     put(ORDER[1], b"\x85\x02\xff")  # $85 = transpose prefix
     put(ORDER[2], b"\x03\xff")
+    put(LOAD + INIT_AT, _init_routine(img))
     return bytes(img), LOAD
+
+
+def _init_routine(img):
+    """A 6502 init (straight-line stores, RTS) that seeds the work cells.
+
+    Seeds what the V20 init does for this image: the per-voice order pointers
+    and their restart copies from the subtune record, the tempo, the groove
+    counters and the volume, and clears the SID registers and voice state.
+    """
+    record = SUBTUNE - LOAD
+    stores = {}
+    for voice in range(3):
+        lo, hi = img[record + voice * 2], img[record + voice * 2 + 1]
+        for base, value in ((0x72E, lo), (0x731, hi), (0x734, lo), (0x737, hi)):
+            stores[LOAD + base + voice] = value
+    stores[LOAD + 0x747] = img[record + 6]
+    stores.update({0xD400 + reg: 0 for reg in range(0x17)})
+    stores.update({LOAD + 0x14 + n: 0 for n in range(0x0C)})
+    stores.update({LOAD + 0x748 + n: 0 for n in range(0x15)})
+    stores.update({LOAD + 0x794: 1, LOAD + 0x746: 3, LOAD + 0x009: 0x0F})
+    code = bytearray()
+    for addr, value in stores.items():
+        code += bytes((0xA9, value, 0x8D)) + _w(addr)
+    return bytes(code) + b"\x60"
 
 
 def build_psid(hard_restart=0x09, songs=1, start=1):
