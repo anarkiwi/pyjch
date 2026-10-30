@@ -39,7 +39,7 @@ from pyjch.serialize import from_json, to_json, to_text
 from pyjch.songmodel import Tune
 from pyjch.variant import detect_variant
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 
 __all__ = [
     "EditorImage",
