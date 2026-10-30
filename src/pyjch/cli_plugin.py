@@ -69,6 +69,36 @@ def _tune_json(model) -> bytes:
     return to_json(extract(model)).encode()
 
 
+def _canonical(model) -> str:
+    """What the model plays: the chosen subtune, its patterns renumbered by first use,
+    and every table, with names, addresses and unreferenced patterns left out."""
+    tune = extract(model)
+    sub = tune.subtunes[min(model.subtune, len(tune.subtunes) - 1)]
+    number: dict = {}
+    lines = [f"tempo {sub.tempo:02X}"]
+    for voice, order in enumerate(sub.order_lists):
+        steps = []
+        for entry in order.entries:
+            new = number.setdefault(entry.pattern, len(number))
+            steps.append(f"{new}+{entry.transpose:02X}")
+        lines.append(
+            f"voice {voice}: {' '.join(steps)} {'loop' if order.loops else 'stop'}"
+        )
+    for old, new in sorted(number.items(), key=lambda item: item[1]):
+        lines.append(f"pattern {new}: {bytes(tune.pattern_raw[old]).hex()}")
+    for index, inst in enumerate(tune.instruments):
+        lines.append(f"inst {index}: {bytes(inst.raw).hex()}")
+    for name in ("pitch_table", "groove"):
+        lines.append(f"{name}: {bytes(getattr(tune, name)).hex()}")
+    for step in tune.pw_program + tune.filter_program:
+        lines.append(repr(step))
+    if tune.wavetable is not None:
+        lines.append(f"wave: {bytes(tune.wavetable.note_col).hex()}")
+        lines.append(f"wavectrl: {bytes(tune.wavetable.ctrl_col).hex()}")
+    lines += [repr(command) for command in tune.commands]
+    return "\n".join(lines) + "\n"
+
+
 def _add_export_arguments(subparser) -> None:
     subparser.add_argument("song", help="JCH NewPlayer .sid/.prg file")
     subparser.add_argument("output", help="output file (.json/.txt/.prg)")
@@ -131,6 +161,7 @@ FORMAT = SidFormat(
     variant=detect_variant,
     facet_sites=facet_sites,
     probes={"tune": _tune_json},
+    canonical=_canonical,
     grammar=grammar.GRAMMAR,
     streams=_streams,
     commands=(

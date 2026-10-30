@@ -159,18 +159,30 @@ version plays byte-exactly through `EmuPlayer`, so no tune is silently mis-playe
 ### Proofs
 
 Besides the oracle runs, `tests/test_specplayer.py` proves with
-`pysidtracker.playspec.tv.validate` that two spec routines leave exactly what the
+`pysidtracker.playspec.tv.validate` that three spec routines leave exactly what the
 tune's 6502 code leaves, for all initial memory, in each V20 oracle tune:
 `voice[0].inst_init` (the instrument start: wave pointer, pulse and filter
-programs, AD/SR and hard restart) and `voice[0].blit` (the output stage that writes
-every SID register). A changed spec is refuted with a counterexample that replays.
+programs, AD/SR and hard restart), `voice[0].blit` (the output stage that writes
+every SID register) and `voice[0].advance` (the row advance: the pattern cursor,
+the order-list step with its `$FF` restart, and the `$FE` stop that silences the
+voice). A changed spec is refuted with a counterexample that replays.
 
-The row-advance, pattern-command and vibrato routines are not proved. They contain
-the vibrato shift loop, a counted loop of up to 128 iterations with an
-unconditional back-edge. Since pysidtracker 0.45.0
+`advance` is a stretch of the play routine, run to the start of `not_endpat`. The
+stop path leaves the stretch by jumping to the voice epilogue; the test points that
+one jump at `not_endpat` so every path reaches the stop, and the stop path's own
+writes are still compared.
+
+The pattern-command and vibrato routines are not proved. They contain the vibrato
+shift loop, a counted loop of up to 128 iterations with an unconditional
+back-edge. Since pysidtracker 0.45.0
 ([#148](https://github.com/anarkiwi/pysidtracker/issues/148)) the validator no
 longer unrolls it without end, but the solver has not finished either routine in
 tens of minutes.
+
+`pysidtracker equiv A B` exits 0 when two NewPlayer tunes play the same song: it
+compares the chosen subtune's order lists with the patterns they reach renumbered
+by first use, plus the instrument, pitch, groove, wave, pulse, filter and command
+tables. Names, addresses and unreferenced patterns do not count.
 
 ## HVSC oracle survey
 

@@ -343,6 +343,12 @@ def test_table_overflowing_next_base_raises():
         editor.write_editor_prg(tune, driver=make_driver(tight))
 
 
+def test_a_table_placed_in_the_io_area_is_refused():
+    in_io = dict(NP25_BASES, order0=0xD000)
+    with pytest.raises(SidParseError, match="C64 I/O area"):
+        editor.write_editor_prg(_tune(), driver=make_driver(in_io))
+
+
 def _work_file(magic):
     """A written NP20 work file whose ``$0FEE`` magic is replaced by ``magic``."""
     prg = bytearray(
