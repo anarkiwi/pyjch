@@ -7,8 +7,8 @@ layout {
 }
 
 cell sid: u8[32] @ 0xD400 out;
-cell zp_lo: u8 @ 0xFB;
-cell zp_hi: u8 @ 0xFC;
+cell zp_lo: u8 @ 0xFB scratch;
+cell zp_hi: u8 @ 0xFC scratch;
 
 cell pitch: u8[260] @ L.pitch ro;
 cell wave_note: u8[256] @ L.wave_note ro;
@@ -35,6 +35,22 @@ cell flt_dw: u8 @ L.cb + 0x791;
 cell flt_cut: u8 @ L.cb + 0x792;
 cell flt_mode: u8 @ L.cb + 0x793;
 cell delay_en: u8 @ L.cb + 0x7CA;
+
+machine enter {
+  signal lo: u8 = 0;
+  signal hi: u8 = 0;
+  step {
+    lo := zp_lo;
+    hi := zp_hi;
+  }
+}
+
+machine leave {
+  step {
+    zp_lo := enter.lo;
+    zp_hi := enter.hi;
+  }
+}
 
 machine clock {
   step {
@@ -525,7 +541,7 @@ machine voice[x in 0..3] {
     }
   }
 
-  step {
+  proc run() {
     if active == 0 {
       return;
     }
@@ -546,11 +562,17 @@ machine voice[x in 0..3] {
       engine();
     }
   }
+
+  step {
+    run();
+  }
 }
 
 schedule {
+  enter;
   clock;
   voice[2];
   voice[1];
   voice[0];
+  leave;
 }

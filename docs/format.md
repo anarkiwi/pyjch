@@ -12,9 +12,12 @@ the demoscene. `pyjch` reads it at three levels:
   (Flexible, Simple_Tune): `parse` returns a `Song` the player replays
   register-for-register.
 - **Byte-exact V20 player** — the `JCH_NewPlayer_V20` two-column wavetable
-  engine (largest HVSC bucket): `pyjch.player.JchPlayer` replays the 1,324
-  tunes that are the V20 code build, each validated frame-exact against the
-  `sidtrace` register oracle. `pyjch.player.playable(model)` is the soundness gate.
+  engine (largest HVSC bucket): `pyjch.player.V20Player` runs the playspec
+  [`newplayer.play`](../src/pyjch/specs/newplayer.play) on the memory the tune's
+  own init leaves. It replays the tunes that are the reference V20 code build,
+  each validated frame-exact against the `sidtrace` register oracle and
+  memory-exact against the tune's own 6502 run.
+  `pyjch.player.playable(model)` is the soundness gate.
 - **Model reader** — the remaining JCH NewPlayer *wavetable family*
   (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
@@ -93,16 +96,16 @@ reads them through this stream's pointer.
 
 ## Player and playback notes
 
-`make_player(model)` (a `JchPlayer` or an `EmuPlayer`) exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
+`make_player(model)` (a `JchPlayer`, a `V20Player` or an `EmuPlayer`) exposes `.play_frame() -> list[(reg, val)]` and `.regs`;
 `iter_frames` / `render_grid` and `pysidtracker.register_writes_from_player`
 provide the shared `py*` register-log surface. The CLI `reglog` command emits
-byte-exact register logs for every recovered version (V0x/V20 from their native
-engines, the rest via `EmuPlayer`).
+byte-exact register logs for every recovered version (V0x from its native
+engine, V20 from the spec player, the rest via `EmuPlayer`).
 
 ### Byte-exact verdict
 
-Every recovered JCH NewPlayer version plays byte-exactly: V0x and V20 through
-their native pure-Python engines, and every other recovered family version
+Every recovered JCH NewPlayer version plays byte-exactly: V0x through its native
+pure-Python engine, V20 through the playspec, and every other recovered family version
 (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18) by running the tune's own 6502
 driver on jennings via `pysidtracker.EmuPlayer`. All are validated frame-for-frame
 against the shared `pysidtracker` `sidtrace` register oracle — a patched
@@ -120,9 +123,11 @@ subset:
 | Lunardive (NTSC) | Ahz | V15 | EmuPlayer | **byte-exact** |
 | 1st Chaff | — | V17 | EmuPlayer | **byte-exact** |
 
-`playable()` admits only the byte-identical V20 build to the native engine;
-every other recovered version plays byte-exactly through `EmuPlayer`, so no
-tune is silently mis-played.
+`playable()` admits only the reference V20 build to the spec player: the work-cell
+and table idioms must resolve, and the code the spec states but the SID registers
+do not show (the saved zero-page pointer, the filter-program start) must match.
+A build that differs there is gated out as `code-differs`; every other recovered
+version plays byte-exactly through `EmuPlayer`, so no tune is silently mis-played.
 
 ## HVSC oracle survey
 

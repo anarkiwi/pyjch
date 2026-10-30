@@ -55,6 +55,10 @@ def _fragments():
         b"\xb9" + _w(INSTRUMENTS + 3) + b"\x48\x29\xf0",  # inst filter field
         b"\xb9" + _w(INSTRUMENTS + 4) + b"\x8d\x90\x17",  # inst filter-prog field
         b"\xbc\x95\x17\xb9" + _w(WAVE_NOTE) + b"\x30",  # freq-note wave read
+        b"\xa5\xfb\x48\xa5\xfc\x48",  # save the zero-page pointer
+        b"\x68\x85\xfc\x68\x85\xfb\x60",  # restore it and return
+        b"\xb9" + _w(FILTERPROG) + b"\xc9\xff\xf0\x03\x8d\x92\x17"
+        b"\xb9" + _w(FILTERPROG + 2) + b"\x8d\x91\x17",  # filter-program start
         b"\xa9\x09\x99\x04\xd4",  # hard-restart CTRL immediate ($09)
     ]
     out = bytearray()
