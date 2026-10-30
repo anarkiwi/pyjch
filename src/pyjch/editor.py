@@ -28,6 +28,8 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
+from pysidtracker import load_prefix
+
 from pyjch.errors import SidParseError
 from pyjch.songmodel import OrderEntry, Tune
 
@@ -475,8 +477,7 @@ def write_editor_prg(
     image = bytearray(size)
     for offset, byte in mem.items():
         image[offset] = byte
-    load = profile.load_addr
-    return bytes([load & 0xFF, (load >> 8) & 0xFF]) + bytes(image)
+    return load_prefix(profile.load_addr) + bytes(image)
 
 
 @dataclass(frozen=True)
