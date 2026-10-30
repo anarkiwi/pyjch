@@ -77,9 +77,9 @@ out; the counters tick down once every tempo reload. The bytes are listed under
 
 The streams the wavetable family's player reads are specified by
 [`newplayer.lark`](../src/pyjch/newplayer.lark), a `pysidtracker` `ByteGrammar`
-(one latin-1 character per byte). `extract` and `NewPlayerModel.iter_orderlist`
-read them through it, so a stream that does not match is a `SidParseError`, not
-a silently truncated song. `pysidtracker grammar TUNE` lists the parsed streams.
+(one latin-1 character per byte). `extract`, `NewPlayerModel.iter_orderlist` and
+the editor writer and reader (`pyjch.editor`) read the streams through it, so a
+stream that does not match is a `SidParseError`, not a silently truncated song. `pysidtracker grammar TUNE` lists the parsed streams.
 
 | Rule | Bytes | Meaning |
 | ---- | ----- | ------- |
@@ -97,17 +97,29 @@ a silently truncated song. `pysidtracker grammar TUNE` lists the parsed streams.
 | | `$01`-`$7E` | note, an index into the frequency table with the transpose added |
 | | `$80`-`$8F` | set the note duration; read in the same call as the byte after it |
 | | `$90`-`$FF` | end of subpattern: back to the order list |
-| `instrument` | 8 bytes | AD, SR, wave flags, filter, filter program, pulse program, wave start 1/2 |
-| `step` | 4 bytes | pulse or filter program record |
+| `instrument` | 8 bytes | AD, SR, wave flags, filter mode and route, filter start, pulse start, wave start, alternate wave start |
+| `wave_program` | `$00`-`$7D`, `$80`-`$FF` | a row of the wave table's note column: a note added to the voice's note, or with bit 7 set an absolute note (in an absolute-frequency instrument, the frequency high byte) |
+| | `$7E` | hold: stay on the previous row; ends the program |
+| | `$7F` | jump to the row the control column names at this row; ends the program |
+| `pulse_table` | 4 bytes per step | pulse width to set (`$FF` keeps the current), step per call, direction (bit 7 = down) and rate, offset of the next step |
+| `filter_table` | 4 bytes per step | cutoff to set (`$FF` keeps the current), step per call, dwell, offset of the next step (the first two bytes also hold the groove) |
+| `command_table` | 2 bytes per entry | kind from the first byte: `$00`-`$2F` portamento, `$60`-`$6F` vibrato, `$90`-`$9F` AD override, `$E0`-`$EF` tempo, `$F0`-`$FF` volume, any other value patches an instrument's wave start; the second byte, and the first byte's low nibble for portamento and vibrato, are the parameters |
 
+A wave program runs from an instrument's wave start (or its alternate start after a
+rest, or a wave patch) to the first `$7E` or `$7F` row. Pulse, filter and command
+tables are whole steps or entries with no terminator; the next base ends them.
 Bytes stored after a terminator belong to the next stream; the player never
 reads them through this stream's pointer.
 
 The specs name these rules on the streams they open (`stream ... grammar`), so
 `JchPlayer(model, validate=True)` parses each stream as the player reaches it and
-`player.validator.failures()` lists the malformed ones. Over every V20 tune in the
-JCH and DRAX HVSC directories, whole songs, the player opens 27,008 distinct
-streams and the grammar accepts all of them.
+`player.validator.failures()` lists the malformed ones, wave programs included.
+Over every V20 tune in the JCH and DRAX HVSC directories, whole songs, the player
+opens 32,371 distinct streams and the grammar accepts all of them. `extract` also
+checks, statically, the wave programs a V20 tune's patterns select (the implicit
+first instrument is left to the run-time check, since whether a voice plays it
+depends on play order); other family builds pack instrument records differently,
+so their wave starts are not read.
 
 ## Player and playback notes
 

@@ -30,7 +30,9 @@ from typing import Dict, List, Optional, Tuple
 
 from pysidtracker import load_prefix
 
+from pyjch import grammar
 from pyjch.errors import SidParseError
+from pyjch.newplayer import image_of
 from pyjch.songmodel import OrderEntry, Tune
 
 _MAX_INSTRUMENTS = 32
@@ -458,6 +460,8 @@ def write_editor_prg(
     tune = _split_long_patterns(tune)
     _check_capacity(tune)
     _require_tables(tune, profile)
+    for _stream in grammar.tune_streams(tune):
+        pass
     mem: Dict[int, int] = {}
     floor = layout.floor
 
@@ -573,23 +577,27 @@ def read_editor_prg(
         version = version_from_name(name)
     tempo = byte(word(profile.ptr_addr(profile.idx_init)) + 6)
 
+    img = image_of(load, image)
+
+    def stream(addr: int, rule: str, what: str, reach: int):
+        size = min(reach, load + len(image) - addr)
+        if size <= 0:
+            raise SidParseError(f"{what} at ${addr:04X} outside editor image")
+        return grammar.read_stream(img, addr, rule, what, size)
+
     tunes: List[List[List[int]]] = []
     referenced: set = set()
     for voice in range(3):
         addr = word(profile.ptr_addr(profile.idx_order[voice]))
         voice_tunes: List[List[int]] = []
-        raw: List[int] = []
         while True:
-            value = byte(addr)
-            addr += 1
-            if value not in _MARKS:
-                raw.append(value)
-                if value < 0x80:
-                    referenced.add(value)
-                continue
+            order = stream(
+                addr, grammar.ORDERLIST, f"order list {voice}", grammar.ORDERLIST_REACH
+            )
+            referenced.update(pattern for pattern, _transpose in order.steps)
+            addr += len(order.raw)
             # the byte after a mark is ignored by the players
-            voice_tunes.append(raw + [value, byte(addr)])
-            raw = []
+            voice_tunes.append(list(order.raw) + [byte(addr)])
             addr += 1
             # a single mark separates tunes; consecutive marks end the block
             if byte(addr) in _MARKS:
@@ -605,14 +613,8 @@ def read_editor_prg(
     sequences: List[List[int]] = []
     for index in range(max(referenced) + 1 if referenced else 0):
         addr = byte(seqlo + index) | (byte(seqhi + index) << 8)
-        raw = []
-        while True:
-            value = byte(addr)
-            raw.append(value)
-            addr += 1
-            if value == 0x7F:
-                break
-        sequences.append(raw)
+        rows = stream(addr, grammar.PATTERN, f"sequence {index}", grammar.PATTERN_REACH)
+        sequences.append(list(rows.raw))
 
     return EditorImage(
         profile=profile,
