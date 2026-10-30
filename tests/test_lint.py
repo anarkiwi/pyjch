@@ -36,3 +36,8 @@ def test_import_all():
 
     for name in pyjch.__all__:
         assert hasattr(pyjch, name), name
+
+
+def test_pysidtracker_lint(lint_project):
+    """No dead symbols, dangling doc references or windowed comparisons."""
+    assert lint_project("src/pyjch") == []

@@ -26,7 +26,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from pysidtracker import SID_BASE, EmuPlayer, MemPlayer, is_jmp_vector
+from pysidtracker import EmuPlayer, MemPlayer, is_jmp_vector
 from pysidtracker.playspec import SpecPlayer, load
 
 from pyjch.errors import SidParseError
@@ -38,8 +38,6 @@ from pyjch.newplayer import (
     find_site,
     hard_restart_site,
 )
-
-_D400 = SID_BASE
 
 # ----------------------------------------------------------------------------
 # V20 work-cell / global offsets relative to the code base (cb = init address).
@@ -255,8 +253,8 @@ class JchPlayer(SpecPlayer):
     ``model`` is a :class:`~pyjch.model.Song` (``v0x.play``) or a
     :func:`playable` :class:`~pyjch.newplayer.NewPlayerModel`
     (``newplayer.play``); :func:`make_player` plays any other recovered family
-    build on :class:`~pysidtracker.EmuPlayer`.  :meth:`play_frame` runs one tick,
-    returning the SID register writes; :meth:`render_grid` yields the
+    build on :class:`~pysidtracker.EmuPlayer`.  :meth:`~pysidtracker.MemPlayer.play_frame` runs one tick,
+    returning the SID register writes; :meth:`~pysidtracker.MemPlayer.render_grid` yields the
     forward-filled 25-register per-frame grid, pulse-width highs nibble-masked as
     by ``EmuPlayer``.
     """
