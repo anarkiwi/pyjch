@@ -1,0 +1,24 @@
+// Song streams the JCH NewPlayer wavetable family reads, one byte per character.
+// Order lists and patterns end at a terminator; the bytes stored after it are
+// never read through that stream's pointer.
+
+%import bytes (BYTE, _TAIL)
+
+TRANSPOSE: /[\x80-\xfd]/
+PATTERN: /[\x00-\x7f]/
+STOP: /\xfe/
+LOOP: /\xff/
+
+NOTE: /[\x00-\x7e]/
+COMMAND: /[\x80-\xff]/
+END: /\x7f/
+
+NOTE_V1: /[\x00-\x7f]/
+COMMAND_V1: /[\x80-\xfe]/
+END_V1: /\xff/
+
+orderlist: (TRANSPOSE | PATTERN)* (STOP | LOOP) _TAIL?
+pattern: (NOTE | COMMAND)* END _TAIL?
+pattern_v1: (NOTE_V1 | COMMAND_V1)* END_V1 _TAIL?
+instrument: BYTE~8
+step: BYTE~4

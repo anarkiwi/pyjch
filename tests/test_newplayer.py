@@ -64,6 +64,9 @@ def _base_image():
     _put(buf, PHI, bytes([PAT0 >> 8, PAT1 >> 8]))
     # Instrument 0 record.
     _put(buf, INSTR, bytes([0x05, 0x58, 0x80, 0xF1, 0x04, 0x04, 0x00, 0x00]))
+    # Patterns: a note, then the $7F terminator (V1/V2 read on to the $FF).
+    _put(buf, PAT0, bytes([0xA0, 0x24, 0x7F, 0xFF]))
+    _put(buf, PAT1, bytes([0x30, 0x7E, 0x7F, 0xFF]))
     # Order lists: a transpose prefix + pattern index, then loop.
     _put(buf, OL0, bytes([0x8C, 0x00, 0x01, 0xFF]))  # $8C transpose, pat 0, pat 1, loop
     _put(buf, OL1, bytes([0x01, 0xFE]))  # pat 1, stop

@@ -121,7 +121,9 @@ the same table set the `$0Fxx` pointers above resolve to in the reference build:
 
 ## Order-list (sequence) encoding [V]
 
-The **editor** order list is a stream of **fixed 2-byte pairs
+The packed player reads order lists as single bytes (`$FE` stop, `$FF` loop; see
+[format.md](format.md#song-stream-grammar)); the pairs below are the **editor**
+encoding. The **editor** order list is a stream of **fixed 2-byte pairs
 `(transpose, seq_index)`** — verified verbatim from [`converter_jch.cpp`][sf2]'s
 read loop:
 
@@ -142,7 +144,9 @@ carries its transpose byte and the list ends on an `$FF` transpose byte; no
 
 ## Sequence (pattern) event encoding [V]
 
-Each event is a byte pair `(byte0, note)`. The decisive rule, verbatim from
+The packed player reads patterns as single bytes to `$7F` (V1/V2: `$FF`; see
+[format.md](format.md#song-stream-grammar)); the pairs below are the **editor**
+encoding. Each event is a byte pair `(byte0, note)`. The decisive rule, verbatim from
 [`converter_jch.cpp`][sf2]:
 
 ```

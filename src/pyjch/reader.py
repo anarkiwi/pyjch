@@ -25,9 +25,8 @@ from dataclasses import replace
 from typing import Any, Optional, Tuple
 
 from pysidtracker import BaseSidParser, CodePattern, SidImage, find_code_all
-from pysidtracker import SidParseError as _BaseSidParseError
 from pysidtracker import Strategy, find_code_first, locate, read_bytes
-from pysidtracker import resolve_entry_points
+from pysidtracker import reraise_as, resolve_entry_points
 from pysidtracker.locate import STATIC
 
 from pyjch import constants, newplayer
@@ -39,10 +38,8 @@ def _parse_container(
     data: bytes,
 ) -> Tuple[int, int, int, str, str, str, bytes, bytes, SidImage]:
     """Return (load, init, play, name, author, released, image, header, img)."""
-    try:
+    with reraise_as(SidParseError):
         img = SidImage.from_bytes(data)
-    except _BaseSidParseError as exc:
-        raise SidParseError(str(exc)) from exc
     header = img.header
     load = img.load
     # Header init/play of 0 mean "same as load"; a bare .prg has no header, so

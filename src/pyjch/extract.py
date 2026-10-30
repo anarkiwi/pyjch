@@ -23,7 +23,7 @@ will not decode coherently is left absent and noted in
 from dataclasses import asdict, astuple, dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from pyjch import player
+from pyjch import grammar, player
 from pyjch.errors import SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
@@ -47,31 +47,13 @@ from pyjch.songmodel import (
     WaveTable,
 )
 
-_MAX_WALK = 512  # order-list length cap for the static walk
-_MAX_PATTERN = 1024  # pattern length cap (longest real sequence observed: 820 B)
 
-
-def _raw_stream(
-    model, addr: Optional[int], terminators, limit: int = _MAX_WALK
-) -> List[int]:
-    """Source bytes from ``addr`` through (and including) the first terminator.
-
-    A verbatim slice for faithful re-emit; needs only the base + terminators, so
-    it works for both the V20 tier and the family tier (no full decode). Empty
-    when ``addr`` is absent.
-    """
+def _stream(model, addr: Optional[int], rule: str, what: str, reach: int):
+    """The ``rule`` stream at ``addr`` (a :class:`SidParseError` if malformed)."""
     if addr is None:
-        return []
-    out: List[int] = []
-    for _ in range(limit):
-        byte = model._byte(addr)  # pylint: disable=protected-access
-        if byte is None:
-            break
-        out.append(byte)
-        addr += 1
-        if byte in terminators:
-            break
-    return out
+        raise SidParseError(f"{what}: pointer out of range")
+    size = min(reach, model.load_addr + len(model.image) - addr)
+    return grammar.read_stream(model.sid, addr, rule, what, size)
 
 
 _COMMAND_HI = {
@@ -120,50 +102,45 @@ def _decode_command(model, byte: int, cmdparam: Optional[int]) -> CommandEvent:
 
 def _decode_orderlist(model, subtune: int, voice: int) -> OrderList:
     addr = model.orderlist_ptr(subtune, voice)
-    entries: List[OrderEntry] = []
-    loops = False
-    transpose = 0
-    for _ in range(_MAX_WALK):
-        byte = model._byte(addr)  # pylint: disable=protected-access
-        if byte is None:
-            break
-        addr += 1
-        if byte == 0xFE:
-            break
-        if byte == 0xFF:
-            loops = True
-            break
-        if byte >= 0x80:
-            transpose = byte
-            continue
-        entries.append(OrderEntry(pattern=byte, transpose=transpose))
-        transpose = 0
-    raw = _raw_stream(model, model.orderlist_ptr(subtune, voice), (0xFE, 0xFF))
-    return OrderList(entries=entries, loops=loops, restart=0, raw=raw)
+    stream = _stream(
+        model,
+        addr,
+        grammar.ORDERLIST,
+        f"order list {subtune}.{voice}",
+        grammar.ORDERLIST_REACH,
+    )
+    entries = [OrderEntry(pattern, transpose) for pattern, transpose in stream.steps]
+    return OrderList(
+        entries=entries, loops=stream.loops, restart=0, raw=list(stream.raw)
+    )
 
 
-def _decode_pattern(model, base: Optional[int], cmdparam: Optional[int]):
-    events: List[PatternEvent] = []
+def _decode_pattern(model, base: Optional[int], cmdparam: Optional[int], index: int):
+    """The decoded events and source bytes of pattern ``index`` at ``base``."""
     if base is None:
-        return events
-    addr = base
-    for _ in range(_MAX_PATTERN):
-        byte = model._byte(addr)  # pylint: disable=protected-access
-        if byte is None or byte == 0x7F:
-            break
-        addr += 1
+        return [], []
+    stream = _stream(
+        model,
+        base,
+        grammar.pattern_rule(model),
+        f"pattern {index}",
+        grammar.PATTERN_REACH,
+    )
+    events = []
+    for byte in stream.events:
         if byte >= 0x80:
             events.append(
                 PatternEvent(byte, command=_decode_command(model, byte, cmdparam))
             )
         else:
             events.append(PatternEvent(byte, note=_decode_note(byte)))
-    return events
+    return events, list(stream.raw)
 
 
 def _decode_instrument(rec: List[int]) -> Instrument:
+    rec = list(grammar.GRAMMAR.parse_exact(bytes(rec), grammar.INSTRUMENT).raw)
     return Instrument(
-        raw=list(rec),
+        raw=rec,
         ad=rec[0],
         sr=rec[1],
         wave_speed=rec[2] & 0x0F,
@@ -195,7 +172,14 @@ def _slice(model, base: int, end: int) -> List[int]:
 def _records(raw: List[int], cls):
     """4-byte records over ``raw``, trailing all-zero records trimmed (min 1)."""
     count = len(raw) // 4
-    recs = [cls(*raw[i * 4 : i * 4 + 4]) for i in range(count)]
+    recs = [
+        cls(
+            *grammar.GRAMMAR.parse_exact(
+                bytes(raw[i * 4 : i * 4 + 4]), grammar.STEP
+            ).raw
+        )
+        for i in range(count)
+    ]
     zero = cls(0, 0, 0, 0)
     while len(recs) > 1 and recs[-1] == zero:
         recs.pop()
@@ -231,10 +215,9 @@ def _collect(model, cmdparam: Optional[int]):
     inst_ref: Set[int] = {0}
     cmd_ref: Set[int] = set()
     for idx in range(max_pat + 1):
-        base = model.pattern_ptr(idx)
-        events = _decode_pattern(model, base, cmdparam)
+        events, raw = _decode_pattern(model, model.pattern_ptr(idx), cmdparam, idx)
         patterns.append(events)
-        pattern_raw.append(_raw_stream(model, base, (0x7F,), _MAX_PATTERN))
+        pattern_raw.append(raw)
         for event in events:
             cmd = event.command
             if cmd is None:

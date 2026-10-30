@@ -68,6 +68,29 @@ opcodes (`$80–$9F`), subpattern references (`<$80` in the orderlist push a
 pointer and jump via the subpattern tables), gate/tempo counters (`$80–$8F`
 inside a subpattern), and note bytes that index the frequency table.
 
+## Song stream grammar
+
+The streams the wavetable family's player reads are specified by
+[`newplayer.lark`](../src/pyjch/newplayer.lark), a `pysidtracker` `ByteGrammar`
+(one latin-1 character per byte). `extract` and `NewPlayerModel.iter_orderlist`
+read them through it, so a stream that does not match is a `SidParseError`, not
+a silently truncated song. `pysidtracker grammar TUNE` lists the parsed streams.
+
+| Rule | Bytes | Meaning |
+| ---- | ----- | ------- |
+| `orderlist` | `$00`-`$7F` | pattern index |
+| | `$80`-`$FD` | transpose for the next pattern index (the last one wins) |
+| | `$FE` / `$FF` | stop / loop; ends the list |
+| `pattern` | `$00`-`$7E` | note (`$00` rest, `$7E` hold) |
+| | `$80`-`$FF` | command (`$8x` duration, `$Ax` instrument, `$C0`+ command-table index) |
+| | `$7F` | ends the pattern |
+| `pattern_v1` | `$00`-`$7F` / `$80`-`$FE` / `$FF` | V1/V2 (interleaved wave stream): note / command / end |
+| `instrument` | 8 bytes | AD, SR, wave flags, filter, filter program, pulse program, wave start 1/2 |
+| `step` | 4 bytes | pulse or filter program record |
+
+Bytes stored after a terminator belong to the next stream; the player never
+reads them through this stream's pointer.
+
 ## Player and playback notes
 
 `make_player(model)` (a `JchPlayer` or an `EmuPlayer`) exposes `.play_frame() -> list[(reg, val)]` and `.regs`;

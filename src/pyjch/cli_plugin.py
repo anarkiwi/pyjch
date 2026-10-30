@@ -9,10 +9,12 @@ JCH-specific ``export`` subcommand -- with no separate ``pyjch`` binary.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import Iterator, List
 
 from pysidtracker import FormatCommand, SidFormat
+from pysidtracker.bytegrammar import Stream
 
+from pyjch import grammar
 from pyjch.editor import np_profile, profile_for_tune, write_editor_prg
 from pyjch.errors import SidParseError
 from pyjch.extract import extract
@@ -49,6 +51,30 @@ def _describe(model) -> List[str]:
             f"  voice {voice}: orderlist @ ${model.orderlist_ptr(0, voice):04X}"
         )
     return lines
+
+
+def _streams(model) -> Iterator[Stream]:
+    """The order lists, patterns and instrument records the player reads."""
+    if not isinstance(model, NewPlayerModel):
+        return
+    tune = extract(model)
+    parse = grammar.GRAMMAR.parse_exact
+    rule = grammar.pattern_rule(model)
+    for index, sub in enumerate(tune.subtunes):
+        for voice, order in enumerate(sub.order_lists):
+            yield (
+                f"order list {index}.{voice}",
+                parse(bytes(order.raw), grammar.ORDERLIST),
+                grammar.ORDERLIST,
+            )
+    for index, raw in enumerate(tune.pattern_raw):
+        yield f"pattern {index}", parse(bytes(raw), rule), rule
+    for index, inst in enumerate(tune.instruments):
+        yield (
+            f"instrument {index}",
+            parse(bytes(inst.raw), grammar.INSTRUMENT),
+            grammar.INSTRUMENT,
+        )
 
 
 def _add_export_arguments(subparser) -> None:
@@ -112,6 +138,8 @@ FORMAT = SidFormat(
     describe=_describe,
     variant=detect_variant,
     facet_sites=facet_sites,
+    grammar=grammar.GRAMMAR,
+    streams=_streams,
     commands=(
         FormatCommand(
             "export",
