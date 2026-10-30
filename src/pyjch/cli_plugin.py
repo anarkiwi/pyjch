@@ -77,6 +77,11 @@ def _streams(model) -> Iterator[Stream]:
         )
 
 
+def _tune_json(model) -> bytes:
+    """The recovered song model as JSON, the derived artifact a snapshot digests."""
+    return to_json(extract(model)).encode()
+
+
 def _add_export_arguments(subparser) -> None:
     subparser.add_argument("song", help="JCH NewPlayer .sid/.prg file")
     subparser.add_argument("output", help="output file (.json/.txt/.prg)")
@@ -138,6 +143,7 @@ FORMAT = SidFormat(
     describe=_describe,
     variant=detect_variant,
     facet_sites=facet_sites,
+    probes={"tune": _tune_json},
     grammar=grammar.GRAMMAR,
     streams=_streams,
     commands=(

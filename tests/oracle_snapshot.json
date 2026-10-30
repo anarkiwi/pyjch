@@ -1,0 +1,87 @@
+{
+ "v0x_flexible": {
+  "model": "a0823515f742b84bcbbd8a0d2d6d5d98",
+  "render": "5ead09130916bd3cb4c744d7b958926a",
+  "tune": "!JCHParseError: extract targets the JCH NewPlayer wavetable family; the V0x Song layout is out of scope"
+ },
+ "v0x_simple_tune": {
+  "model": "182c5d616cc64f6285430bef8da7d86f",
+  "render": "4e10e2b2e9f6f30b7624de5e4d7de532",
+  "tune": "!JCHParseError: extract targets the JCH NewPlayer wavetable family; the V0x Song layout is out of scope"
+ },
+ "v10_ballmania": {
+  "model": "8636e802eead426ba5b74985e558b2b4",
+  "render": "a934a82867b63f4003e1ed2e4809efce",
+  "tune": "40fdd2d60ad088354ca86b856f2f408f"
+ },
+ "v11_usa_tune": {
+  "model": "cae6f14919cd814087abeaa801b0bf9d",
+  "render": "965255c5e0b55cf11e709b1e7592fc02",
+  "tune": "89dad78d4a4b69ad41b660390359e17d"
+ },
+ "v13_apina": {
+  "model": "22f0d3bfe630086101458befb94ed4d5",
+  "render": "d304a58be8c44a11efa1ab88072c9845",
+  "tune": "d5cbea80a309288dfd65b872f5294cd2"
+ },
+ "v14_fjellaporna": {
+  "model": "638de3a6004ca581574eaf3887a9b7fa",
+  "render": "488680813d87b2d466c4ce029da296e8",
+  "tune": "63cd46e48ac8d2f80f7ed460d9359a78"
+ },
+ "v15_lunardive": {
+  "model": "dc72b20bd2b2827e266f1fb1f78314fd",
+  "render": "d2a48c3eff86f38db5d70dc192685c9c",
+  "tune": "d53ccccc22d6f7a57cec31aee09deaa5"
+ },
+ "v17_1st_chaff": {
+  "model": "d63539b91272589faf77b97d644747c6",
+  "render": "24ba982c8d6077c072f6db38265ab137",
+  "tune": "29afe49e373c8e6d37bb7611dec4c946"
+ },
+ "v18_bambino": {
+  "model": "d3c790cee1fcbdca5ceb8ee79ab99443",
+  "render": "e36c1960876dde149ec3d3304ceae526",
+  "tune": "4acc85007d59f409908d7ad456e5619e"
+ },
+ "v1_beatbassie": {
+  "model": "827350428893b2ee375d11d46237e462",
+  "render": "30ad6083c713a420444fd0b0d58c86a2",
+  "tune": "8f9b679dd884668aab2d5fc3b65acb6e"
+ },
+ "v20_24th_amaranth": {
+  "model": "ed8a0c591b9508685cef7c94c4f1cfb3",
+  "render": "de03db4094a6d328d0cc09c9322bcf84",
+  "tune": "c35cfe09e24f2519b2b092bab2868175"
+ },
+ "v20_7d_funkt": {
+  "model": "8404d76477015f2bd8d0fe0f8c2f4b75",
+  "render": "c39855e5adf46cd655e8595e1e17cc5f",
+  "tune": "24244a43efc2e7356abad5ccb174d598"
+ },
+ "v20_stories": {
+  "model": "a754bd9094dfcb992e41b7bd3ca8faad",
+  "render": "ed74acf667bde4238cfe3744a8c9a9b9",
+  "tune": "ca861836016b1a17f5c7e3238aea04f2"
+ },
+ "v2_caverns": {
+  "model": "56a03928ca10dce442e96f604839b97f",
+  "render": "25e0f4dd7aa5a92c83e916960ad6f426",
+  "tune": "59be0856000976d0115260cc4b2c1735"
+ },
+ "v6_acid_1988": {
+  "model": "07e62a108beaf861cad98bb22cd2ac13",
+  "render": "2eac6f3945291e5055e65e74b8eb4f1b",
+  "tune": "9996c330c25ff63dc22ac7ceee309827"
+ },
+ "v8_king_tut": {
+  "model": "e326b840318fff438c5c322e025cbcbb",
+  "render": "c630a49161cb103541787215af9af77b",
+  "tune": "37d8b8d6a45ecdcf05515663ad13b135"
+ },
+ "v9_acid": {
+  "model": "25800bf60a0c1087b3207896ce714103",
+  "render": "c51c5a471375191a5b788e78426335b1",
+  "tune": "8a1222b604a047a4a9e62776a28be8cc"
+ }
+}
