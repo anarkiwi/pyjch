@@ -23,6 +23,7 @@ SID registers only every few frames.
 import oracle_hvsc
 import pytest
 from pysidtracker import aligned_match, cycles_per_frame_for_flags
+from pysidtracker.oracle import play_calls
 from pysidtracker.image import SidImage
 
 # One+ HVSC representative per recovered JCH NewPlayer driver version, each
@@ -51,6 +52,7 @@ TUNES = {
     "v18_bambino": "MUSICIANS/A/Avalon/Bambino.sid",
 }
 SECONDS = 60
+RENDER_MARGIN = 2
 
 
 @pytest.mark.oracle
@@ -61,7 +63,10 @@ def test_render_matches_oracle(relpath, hvsc, sidtrace_oracle):
     data = path.read_bytes()
     cycles = cycles_per_frame_for_flags(SidImage.from_bytes(data).header.flags)
     oracle = sidtrace_oracle(
-        path, frames=None, seconds=SECONDS, cycles_per_frame=cycles
+        path,
+        frames=play_calls(path, SECONDS),
+        seconds=SECONDS + RENDER_MARGIN,
+        cycles_per_frame=cycles,
     )
     rendered = oracle_hvsc.render(data, 1, len(oracle) + 4)[0].tolist()
     assert aligned_match(oracle, rendered, max_lead=4), f"{relpath}: render != oracle"
