@@ -147,7 +147,7 @@ leaves exactly what the tune's 6502 code leaves, for all initial memory, in each
 oracle tune; a changed spec is refuted with a counterexample that replays. The
 row-advance and pattern-command routines are not proved: both reach the vibrato shift
 loop, a counted loop with an unconditional back-edge that the translation validator
-explores without end.
+explores without end ([pysidtracker#148](https://github.com/anarkiwi/pysidtracker/issues/148)).
 
 ## HVSC oracle survey
 
