@@ -228,11 +228,11 @@ class JchSidParser(BaseSidParser):
     Gives the JCH reader the shared ``read``/``parse``/``detect`` surface.
     :meth:`recognize` anchors on either the canonical ``JCH_NewPlayer_V0x``
     init signature (a load-independent SID-register store idiom) or a coherent
-    NewPlayer wavetable-family layout, so :meth:`detect` classifies a tune whose
+    NewPlayer wavetable-family layout, so :meth:`~pysidtracker.BaseSidParser.detect` classifies a tune whose
     song model this reader recovers statically as ``DIRECT`` and reports
     ``UNKNOWN`` for foreign players / unrecoverable versions.  ``DIRECT`` here
     means the song model is recovered directly from the loaded image; every
-    recovered version also replays byte-exact (V0x/V20 via the native engine,
+    recovered version also replays byte-exact (V0x/V20 via their playspecs,
     the rest via :class:`~pysidtracker.EmuPlayer`).
     """
 

@@ -10,6 +10,7 @@ import pytest
 import pysidtracker
 from pysidtracker.cadence import cadence_info
 from pysidtracker.sidid import sidid_signatures
+from pysidtracker.testing import whole_song
 
 from pyjch import JCHParseError, reader
 from pyjch.player import JchPlayer
@@ -20,10 +21,13 @@ from tests.tunes import V0X_REFERENCES
 
 def test_render_matches_player():
     data = synth.build_psid()
-    grid, info = oracle_hvsc.render(data, 1, 120)
-    assert grid.shape == (120, 25)
+    calls = whole_song(120)
+    grid, info = oracle_hvsc.render(data, 1, calls)
+    assert grid.shape == (calls, 25)
     assert grid.dtype == np.int16
-    np.testing.assert_array_equal(grid, JchPlayer(reader.parse(data)).render_grid(120))
+    np.testing.assert_array_equal(
+        grid, JchPlayer(reader.parse(data)).render_grid(calls)
+    )
     assert json.loads(json.dumps(info)) == info
     assert {k: info[k] for k in ("engine", "version", "rsid", "trigger")} == {
         "engine": "v20",

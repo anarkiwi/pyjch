@@ -21,6 +21,7 @@ dispatch -- byte-exactness is validated in ``tests/test_oracle_hvsc.py``.
 
 import pytest
 from pysidtracker import EmuPlayer
+from pysidtracker.testing import song_frames, whole_song
 
 from pyjch import reader
 from pyjch.errors import SidParseError
@@ -83,8 +84,9 @@ def test_v20_render_grid_shape_and_determinism(frames):
 
 
 def test_v20_first_frame_all_registers_then_changed_only():
-    frames = list(iter_frames(_v20_model(), max_frames=400))
-    assert len(frames) == 400
+    calls = whole_song(400)
+    frames = list(iter_frames(_v20_model(), max_frames=calls))
+    assert len(frames) == calls
     assert [reg for reg, _ in frames[0]] == list(range(NREG))
     assert any(len(frame) < NREG for frame in frames[1:])
     # a running tune keeps changing registers frame to frame
@@ -110,7 +112,9 @@ def test_v0x_first_frame_all_registers(relpath, hvsc):
 @pytest.mark.parametrize("relpath", V0X_REFERENCES)
 def test_v0x_loops_forever_until_max_frames(relpath, hvsc):
     tune_path = hvsc(relpath)
-    assert len(list(iter_frames(reader.read(tune_path), max_frames=500))) == 500
+    song = reader.read(tune_path)
+    calls = 2 * song_frames(tune_path, None)
+    assert len(list(iter_frames(song, max_frames=calls))) == calls
 
 
 # --- playability gate -------------------------------------------------------
@@ -147,7 +151,8 @@ def test_non_v20_family_falls_back_to_emulation(idiom):
     reference = EmuPlayer(
         model.image, model.load_addr, model.init_addr, model.play_addr, 1
     )
-    assert player.render_grid(8) == reference.render_grid(8)
+    calls = whole_song(8)
+    assert player.render_grid(calls) == reference.render_grid(calls)
     with pytest.raises(SidParseError, match="has no spec"):
         JchPlayer(model)
 
