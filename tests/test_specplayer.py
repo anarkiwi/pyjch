@@ -78,43 +78,50 @@ def test_memory_equals_the_6502_run_after_every_call(relpath, hvsc):
 
 
 V20_TUNES = {name: rel for name, rel in TUNES.items() if name.startswith("v20")}
-INSTRUMENT = 0x01D  # per-voice work cells, offsets from the code base
-WAVE_POINTER = 0x795
+# Where each proved routine begins in the 6502 code: its first instructions, with the
+# per-voice work cells (offsets from the code base) written as operands.
+ROUTINES = {
+    "inst_init": "BC {instn} B9 {{op:w}} 9D {wtptr}",
+    "blit": "A9 00 9D {portapend} 9D {viben2} 9D {vibsup}",
+}
+CELLS = {
+    "instn": 0x01D,
+    "wtptr": 0x795,
+    "portapend": 0x760,
+    "viben2": 0x763,
+    "vibsup": 0x766,
+}
 
 
-def _inst_init(hvsc, relpath):
-    """``(model, image, pc)``: the tune and where its instrument-start code begins.
+def _routine(hvsc, relpath, name):
+    """``(model, image, pc)``: the tune and where its ``name`` code begins.
 
-    The routine starts ``LDY instrument,X ; LDA instruments+6,Y ; STA wave pointer,X``;
-    from there the 6502 code runs to the play routine's final ``RTS``.
+    From there the 6502 code runs to the play routine's final ``RTS``.
     """
     model = reader.parse(hvsc(relpath).read_bytes())
-    base = model.init_addr
-    site = find_site(
-        model.sid,
-        f"BC {abs_tokens(base + INSTRUMENT)} B9 {{op:w}} 9D "
-        f"{abs_tokens(base + WAVE_POINTER)}",
-    )
+    cells = {cell: abs_tokens(model.init_addr + off) for cell, off in CELLS.items()}
+    site = find_site(model.sid, ROUTINES[name].format(**cells))
     image = bytearray(0x10000)
     image[model.load_addr : model.load_addr + len(model.image)] = model.image
     return model, bytes(image), site.addr
 
 
 @pytest.mark.oracle
+@pytest.mark.parametrize("name", ROUTINES)
 @pytest.mark.parametrize("relpath", V20_TUNES.values(), ids=list(V20_TUNES))
-def test_the_instrument_start_routine_is_proved_equal_to_the_6502_code(relpath, hvsc):
-    """For all initial memory, ``voice[0].inst_init`` leaves what the 6502 code leaves."""
-    model, image, pc = _inst_init(hvsc, relpath)
+def test_a_routine_is_proved_equal_to_the_6502_code(name, relpath, hvsc):
+    """For all initial memory, ``voice[0].<name>`` leaves what the 6502 code leaves."""
+    model, image, pc = _routine(hvsc, relpath, name)
     layout = v20_layout(model, playable(model))
     result = validate(
-        spec("newplayer"), layout, "voice[0].inst_init", image, pc, registers={"X": 0}
+        spec("newplayer"), layout, f"voice[0].{name}", image, pc, registers={"X": 0}
     )
     assert result.proven, result.counterexample
 
 
 @pytest.mark.oracle
 def test_a_changed_spec_is_refuted_and_the_counterexample_replays(hvsc):
-    model, image, pc = _inst_init(hvsc, V20_TUNES["v20_7d_funkt"])
+    model, image, pc = _routine(hvsc, V20_TUNES["v20_7d_funkt"], "inst_init")
     layout = v20_layout(model, playable(model))
     text = (Path(pyjch.__file__).parent / "specs" / "newplayer.play").read_text()
     broken = parse(
