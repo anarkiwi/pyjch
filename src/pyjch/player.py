@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from pysidtracker import EmuPlayer, MemPlayer, is_jmp_vector
+from pysidtracker.formats import SpecBinding
 from pysidtracker.playspec import SpecPlayer, load
 
 from pyjch.errors import SidParseError
@@ -263,18 +264,7 @@ class JchPlayer(SpecPlayer):
     MASK_PW_HI = True
 
     def __init__(self, model, subtune: int = 0, validate: bool = False):
-        if isinstance(model, Song):
-            self.engine, name, layout = "v0x", "v0x", v0x_layout(model)
-        elif isinstance(model, NewPlayerModel):
-            bases = playable(model)
-            if bases is None:
-                raise SidParseError(
-                    f"JCH NewPlayer {model.version} has no spec; "
-                    "make_player plays it on EmuPlayer"
-                )
-            self.engine, name, layout = "v20", "newplayer", v20_layout(model, bases)
-        else:
-            raise SidParseError(f"cannot play a {type(model).__name__}")
+        self.engine, name, layout = _engine(model)
         super().__init__(
             spec(name),
             model.image,
@@ -285,6 +275,31 @@ class JchPlayer(SpecPlayer):
             bind=lambda view, entry: layout,
             validate=validate,
         )
+
+
+def _engine(model) -> tuple:
+    """``(engine, spec name, layout)`` of a V0x song or a :func:`playable` V20 model."""
+    if isinstance(model, Song):
+        return "v0x", "v0x", v0x_layout(model)
+    if isinstance(model, NewPlayerModel):
+        bases = playable(model)
+        if bases is None:
+            raise SidParseError(
+                f"JCH NewPlayer {model.version} has no spec; "
+                "make_player plays it on EmuPlayer"
+            )
+        return "v20", "newplayer", v20_layout(model, bases)
+    raise SidParseError(f"cannot play a {type(model).__name__}")
+
+
+def spec_binding(model) -> SpecBinding:
+    """The :class:`~pysidtracker.formats.SpecBinding` of ``model`` at its own subtune:
+    the packaged ``v0x.play`` or ``newplayer.play`` and its layout, as
+    :class:`JchPlayer` plays it."""
+    _, name, layout = _engine(model)
+    return SpecBinding(
+        spec(name), lambda view, entry: layout, model.image, subtune=model.subtune
+    )
 
 
 def make_player(model, subtune: Optional[int] = None) -> MemPlayer:
