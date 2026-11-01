@@ -20,7 +20,7 @@ from pyjch.errors import SidParseError
 from pyjch.extract import extract
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import make_player
+from pyjch.player import make_player, spec_binding
 from pyjch.reader import JchSidParser, read
 from pyjch.serialize import to_json, to_text
 from pyjch.variant import detect_variant, facet_sites
@@ -164,6 +164,7 @@ FORMAT = SidFormat(
     canonical=_canonical,
     grammar=grammar.GRAMMAR,
     streams=_streams,
+    spec=spec_binding,
     commands=(
         FormatCommand(
             "export",

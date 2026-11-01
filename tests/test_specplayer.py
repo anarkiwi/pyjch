@@ -13,6 +13,7 @@ from pysidtracker.testing import song_frames, whole_song
 import pyjch
 from pyjch import reader
 from pyjch.newplayer import abs_tokens, find_site
+from pyjch.cli_plugin import FORMAT
 from pyjch.player import JchPlayer, make_player, playable, spec, v20_layout, v0x_layout
 
 from tests import _synth_v20 as synth
@@ -50,6 +51,22 @@ def test_spec_plays_the_grid_the_hand_written_engine_played():
     assert hashlib.blake2b(grid.tobytes(), digest_size=16).hexdigest() == (
         SYNTH_GRID_DIGEST
     )
+
+
+def test_format_exports_the_spec():
+    model = _model()
+    bound = FORMAT.spec(model)
+    assert bound.spec is spec("newplayer")
+    assert elaborate(bound.spec, bound.bind(None, None)).name == "newplayer"
+    assert FORMAT.spec_player(model).render_grid(SYNTH_FRAMES) == (
+        make_player(model).render_grid(SYNTH_FRAMES)
+    )
+
+
+def test_format_has_no_spec_for_an_emulated_build(monkeypatch):
+    monkeypatch.setattr("pyjch.player.playable", lambda model: None)
+    with pytest.raises(pyjch.errors.SidParseError):
+        FORMAT.spec(_model())
 
 
 @pytest.mark.oracle
