@@ -34,7 +34,7 @@ from pysidtracker.facets import DEFAULT_SOURCE, Finding, detected, inferred
 from pyjch import newplayer
 from pyjch.model import Song
 from pyjch.newplayer import NewPlayerModel
-from pyjch.player import V20_GATES, V20_REFERENCE, v20_bases
+from pyjch.player import V20_GATES, V20_REFERENCE, spec_gate
 from pyjch.reader import V0X_SIGNATURE
 
 MODELS = ("v0x", "family")
@@ -69,7 +69,7 @@ def _context(model) -> _Context:
         return _Context(model, image, NOT_APPLICABLE, "v0x")
     if not isinstance(model, NewPlayerModel):
         raise TypeError(f"cannot detect a variant of {type(model).__name__}")
-    bases, gate = v20_bases(model)
+    bases, gate = spec_gate(model)
     return _Context(model, model.sid, gate, "emu" if bases is None else "v20")
 
 

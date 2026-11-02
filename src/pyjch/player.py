@@ -5,31 +5,42 @@ plays byte-exactly (validated frame-for-frame against the sidtrace register
 oracle -- see ``tests/test_oracle_hvsc.py``):
 
 * **V0x** -- the canonical ``JCH_NewPlayer_V0x`` layout (init ``FUN_1060`` /
-  play ``FUN_10e8``): per-voice opcode streams walked through the zero-page
-  pointer ``$fb/$fc``, gate-delay counters, split note-frequency tables.  Stated
-  as the playspec ``specs/v0x.play``, driven from a :class:`~pyjch.model.Song`.
-* **V20** -- the later two-column wavetable engine: per-voice ``X=2,1,0`` loop
-  over parallel note/CTRL wavetable columns, a groove tempo divider, PW
-  ping-pong, portamento, vibrato and a global filter sweep.  Stated as the
-  playspec ``specs/newplayer.play``; the spec is bound to the per-tune
-  addresses that :func:`v20_bases` discovers, so a relocated tune plays
-  unchanged.
+  play ``FUN_10e8``): per-voice order lists of subpatterns, beat counters, split
+  note-frequency tables.  Stated as the playspec ``specs/v0x.play``, driven from a
+  :class:`~pyjch.model.Song`.
+* **V20** -- the later two-column wavetable engine: a groove tempo divider, a pattern
+  row read two ticks ahead, parallel note/CTRL wavetable columns, pulse-width and filter
+  programs, portamento, vibrato and hard restart.  Stated as the playspec
+  ``specs/newplayer.play``, bound to the per-tune addresses that :func:`v20_bases`
+  discovers; :func:`spec_gate` leaves to the 6502 the tunes the spec cannot place
+  (:mod:`pyjch.refusal`).
 * every other recovered version plays on :class:`~pysidtracker.EmuPlayer`,
   which runs the tune's own 6502 driver on jennings.
 
 :class:`JchPlayer` runs a spec with :class:`~pysidtracker.playspec.SpecPlayer`
-on the memory the tune's own init leaves.
+from the variables the tune's own init leaves.
 """
 
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, Iterator, List, Optional, Tuple
 
 from pysidtracker import EmuPlayer, MemPlayer, is_jmp_vector
 from pysidtracker.formats import SpecBinding
 from pysidtracker.playspec import SpecPlayer, load
 
+from pyjch.constants import (
+    SHARED_BYTES,
+    SPEC_REFUSALS,
+    V0X_BYTES,
+    V0X_SHARED,
+    V0X_VOICE_REGISTERS,
+    V0X_WORDS,
+    VARIABLE_SHIFTS,
+    VOICE_BYTES,
+    VOICE_WORDS,
+)
 from pyjch.errors import SidParseError
 from pyjch.model import Song
 from pyjch.newplayer import (
@@ -40,11 +51,9 @@ from pyjch.newplayer import (
     hard_restart_site,
 )
 
-# ----------------------------------------------------------------------------
-# V20 work-cell / global offsets relative to the code base (cb = init address).
-# Fixed by the V20 player binary; the discovery idioms below embed several of
-# these operands, so a successful discovery confirms the layout.
-# ----------------------------------------------------------------------------
+# The V20 player keeps its variables in a work area at fixed offsets from the code base (the
+# init address); the discovery idioms embed several of these operands, so a successful
+# discovery confirms the layout.
 FLTDW = 0x791
 FLTCUT = 0x792
 GRVCTR = 0x746
@@ -93,6 +102,7 @@ V20_GATES = (
     V20_WAVE_SPLIT,
     V20_OUT_OF_RANGE,
     V20_CODE,
+    *SPEC_REFUSALS,
 )
 
 
@@ -149,8 +159,8 @@ def v20_bases(model) -> Tuple[Optional[V20Bases], str]:
     note_wave = find_operand(img, f"BC {wtptr} B9 {{op:w}} 30")  # freq_note wave read
     if note_wave != model.wave_note_col:
         return None, V20_WAVE_SPLIT
-    # Code the spec states but the SID registers do not show: the saved zero-page
-    # pointer, and the filter-program start (cutoff kept at $FF, dwell loaded).
+    # Code the SID registers do not show: the saved zero-page pointer, and the
+    # filter-program start (cutoff kept at $FF, dwell loaded).
     fltcut, fltdw = (abs_tokens(cb + o) for o in (FLTCUT, FLTDW))
     filter_start = find_site(
         img, f"B9 {{lead:w}} C9 FF F0 03 8D {fltcut} B9 {{dwell:w}} 8D {fltdw}"
@@ -198,29 +208,48 @@ def v20_bases(model) -> Tuple[Optional[V20Bases], str]:
     return bases, V20_REFERENCE
 
 
-def playable(model) -> Optional[V20Bases]:
-    """Return ``V20Bases`` if ``model`` is a byte-exact-replayable V20 tune.
-
-    Requires the code base (init) to be a ``JMP`` vector and every V20 idiom to
-    resolve in range (see :func:`v20_bases` for the gate that rejects a build).
-    This gates only the NATIVE V20 engine; ``None`` for any other NewPlayer
-    family build, which :func:`make_player` plays byte-exactly on
-    :class:`~pysidtracker.EmuPlayer` (the tune's own 6502 driver on jennings)
-    rather than a native transcription.
+def spec_gate(model) -> Tuple[Optional[V20Bases], str]:
+    """``(bases, "reference")`` when the spec plays ``model``, else ``(None, reason)``: the
+    :func:`v20_bases` gate, or the :mod:`pyjch.refusal` reason the spec cannot place the tune.
     """
-    return v20_bases(model)[0]
+    if hasattr(model, "_spec_gate"):
+        return model._spec_gate  # pylint: disable=protected-access
+    bases, gate = v20_bases(model)
+    if bases is not None:
+        # pylint: disable-next=import-outside-toplevel
+        from pyjch.refusal import refusal
+
+        why = refusal(model, bases)
+        bases, gate = (None, why) if why else (bases, gate)
+    model._spec_gate = bases, gate  # pylint: disable=protected-access
+    return bases, gate
 
 
-def v20_layout(model, bases: V20Bases) -> dict:
-    """The binding of ``newplayer.play`` to ``model``'s discovered V20 build."""
-    return {
-        "cb": model.init_addr,
+def playable(model) -> Optional[V20Bases]:
+    """Return ``V20Bases`` if the spec plays ``model`` byte-exactly (see :func:`spec_gate`).
+
+    Any other NewPlayer family build, and a V20 build the spec cannot place, plays on
+    :class:`~pysidtracker.EmuPlayer`, the tune's own 6502 driver on jennings.
+    """
+    return spec_gate(model)[0]
+
+
+def v20_layout(model, bases: V20Bases, view: bytes) -> dict:
+    """The binding of ``newplayer.play`` to ``model``'s discovered V20 build: the tables'
+    addresses, and ``init_<variable>`` for each play variable as the init left it in ``view``.
+    """
+    base = model.init_addr
+
+    def byte(offset: int, voice: int = 0) -> int:
+        return view[(base + offset + voice) & 0xFFFF]
+
+    voices = range(3)
+    layout = {
         "pitch": bases.pitch,
-        "subtune": bases.subtune,
         "wave_note": bases.wave_note,
         "wave_ctrl": bases.wave_ctrl,
-        "filterprog": bases.filterprog,
-        "pwprog": bases.pwprog,
+        "filter": bases.filterprog,
+        "pulse": bases.pwprog,
         "instruments": bases.instruments,
         "patlo": bases.patternptr_lo,
         "pathi": bases.patternptr_hi,
@@ -229,17 +258,78 @@ def v20_layout(model, bases: V20Bases) -> dict:
         "rearm_sr": bases.rearm_sr,
         "hardrestart": bases.hardrestart,
     }
+    layout.update({f"init_{n}": byte(o) for n, o in SHARED_BYTES.items()})
+    layout.update(
+        {f"init_{n}": [byte(o, x) for x in voices] for n, o in VOICE_BYTES.items()}
+    )
+    layout.update(
+        {
+            f"init_{n}": [byte(lo, x) | byte(hi, x) << 8 for x in voices]
+            for n, (lo, hi) in VOICE_WORDS.items()
+        }
+    )
+    return layout
 
 
-def v0x_layout(song: Song) -> dict:
-    """The binding of ``v0x.play`` to a V0x ``song``."""
-    return {
-        "load": song.load_addr,
+def play_variables(
+    bases: V20Bases, base: int, memory: Callable[[int], int]
+) -> Iterator[Tuple[str, int]]:
+    """``(state name, value)`` of every play variable as the 6502 routine keeps it in the work
+    area at ``base`` (``memory`` reads a 6502 run's): what the spec's state holds."""
+
+    def scaled(name: str, value: int) -> int:
+        return value >> VARIABLE_SHIFTS.get(name, 0)
+
+    for name, offset in SHARED_BYTES.items():
+        if name == "fpos":
+            yield "fptr", bases.filterprog + memory(base + offset)
+        else:
+            yield name, scaled(name, memory(base + offset))
+    for voice in range(3):
+        for name, offset in VOICE_BYTES.items():
+            value = memory(base + offset + voice)
+            if name == "pwcur":
+                yield f"voice[{voice}].pwrow", bases.pwprog + value
+            else:
+                yield f"voice[{voice}].{name}", scaled(name, value)
+        for name, (lo, hi) in VOICE_WORDS.items():
+            if name not in ("start", "rst"):
+                word = memory(base + lo + voice) | memory(base + hi + voice) << 8
+                yield f"voice[{voice}].{name}", word
+
+
+def v0x_layout(song: Song, view: bytes) -> dict:
+    """The binding of ``v0x.play`` to a V0x ``song``: its tables and gate immediates, and
+    ``init_<variable>`` for each play variable as the init left it in ``view``."""
+    base = song.load_addr
+
+    def byte(offset: int, voice: int = 0) -> int:
+        return view[(base + offset + voice) & 0xFFFF]
+
+    voices = range(3)
+    layout = {
+        "load": base,
         "subptr_lo": song.subptr_lo,
         "subptr_hi": song.subptr_hi,
         "gate_ctrl": song.gate_ctrl,
         "gateoff_ctrl": song.gateoff_ctrl,
     }
+    layout.update({f"init_{n}": byte(o) for n, o in V0X_SHARED.items()})
+    layout.update(
+        {f"init_{n}": [byte(o, x) for x in voices] for n, o in V0X_BYTES.items()}
+    )
+    layout.update(
+        {
+            f"init_{n}": [byte(lo, x) | byte(hi, x) << 8 for x in voices]
+            for n, (lo, hi) in V0X_WORDS.items()
+        }
+    )
+    return layout
+
+
+def v0x_refused(song: Song) -> bool:
+    """Whether the spec cannot place ``song``: a voice's SID registers are not ``7 * x`` on."""
+    return any(song.image[V0X_VOICE_REGISTERS + v] != 7 * v for v in range(3))
 
 
 @lru_cache(maxsize=None)
@@ -264,7 +354,7 @@ class JchPlayer(SpecPlayer):
     MASK_PW_HI = True
 
     def __init__(self, model, subtune: int = 0, validate: bool = False):
-        self.engine, name, layout = _engine(model)
+        self.engine, name, bind = _engine(model)
         super().__init__(
             spec(name),
             model.image,
@@ -272,15 +362,21 @@ class JchPlayer(SpecPlayer):
             model.init_addr,
             model.play_addr,
             subtune,
-            bind=lambda view, entry: layout,
+            bind=bind,
             validate=validate,
         )
 
 
 def _engine(model) -> tuple:
-    """``(engine, spec name, layout)`` of a V0x song or a :func:`playable` V20 model."""
+    """``(engine, spec name, bind)`` of a V0x song or a :func:`playable` V20 model, ``bind``
+    giving the layout from the memory after the init."""
     if isinstance(model, Song):
-        return "v0x", "v0x", v0x_layout(model)
+        if v0x_refused(model):
+            raise SidParseError(
+                "JCH NewPlayer V0x with voice registers off 7 * voice has no spec; "
+                "make_player plays it on EmuPlayer"
+            )
+        return "v0x", "v0x", lambda view, entry: v0x_layout(model, view)
     if isinstance(model, NewPlayerModel):
         bases = playable(model)
         if bases is None:
@@ -288,7 +384,7 @@ def _engine(model) -> tuple:
                 f"JCH NewPlayer {model.version} has no spec; "
                 "make_player plays it on EmuPlayer"
             )
-        return "v20", "newplayer", v20_layout(model, bases)
+        return "v20", "newplayer", lambda view, entry: v20_layout(model, bases, view)
     raise SidParseError(f"cannot play a {type(model).__name__}")
 
 
@@ -296,10 +392,8 @@ def spec_binding(model) -> SpecBinding:
     """The :class:`~pysidtracker.formats.SpecBinding` of ``model`` at its own subtune:
     the packaged ``v0x.play`` or ``newplayer.play`` and its layout, as
     :class:`JchPlayer` plays it."""
-    _, name, layout = _engine(model)
-    return SpecBinding(
-        spec(name), lambda view, entry: layout, model.image, subtune=model.subtune
-    )
+    _, name, bind = _engine(model)
+    return SpecBinding(spec(name), bind, model.image, subtune=model.subtune)
 
 
 def make_player(model, subtune: Optional[int] = None) -> MemPlayer:
@@ -311,7 +405,9 @@ def make_player(model, subtune: Optional[int] = None) -> MemPlayer:
     """
     if subtune is None:
         subtune = model.subtune
-    if isinstance(model, NewPlayerModel) and playable(model) is None:
+    if (isinstance(model, NewPlayerModel) and playable(model) is None) or (
+        isinstance(model, Song) and v0x_refused(model)
+    ):
         return EmuPlayer(
             model.image, model.load_addr, model.init_addr, model.play_addr, subtune
         )

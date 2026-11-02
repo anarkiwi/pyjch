@@ -1,12 +1,13 @@
 """V0x stream grammar: the bytes it names behave as ``docs/format.md`` says."""
 
 import pytest
-from pysidtracker.playspec import elaborate, run
+from pysidtracker.playspec import compile_program, elaborate
+from pysidtracker.playspec.pyexec import controls
 
 from pyjch import grammar, reader
 from pyjch.cli_plugin import FORMAT
 from pyjch.errors import SidParseError
-from pyjch.player import spec, v0x_layout
+from pyjch.player import JchPlayer, spec, v0x_layout
 from pyjch.model import Song
 from pysidtracker.testing import whole_song
 
@@ -24,41 +25,49 @@ def _memory(order, subpattern):
     for index in range(0x60):
         mem[LOAD + 0x21F + 2 * index] = index
         mem[LOAD + 0x220 + 2 * index] = 0x10 + index
-    for voice, addr in enumerate(ORDERS):
+    for addr in ORDERS:
         mem[addr : addr + len(order)] = order
-        for base in (0x2DF, 0x2E5):
-            mem[LOAD + base + voice] = addr & 0xFF
-            mem[LOAD + base + 3 + voice] = addr >> 8
-        mem[LOAD + 0x2F1 + voice] = 7 * voice
-        mem[LOAD + 0x2F6 + voice] = 3
-        mem[LOAD + 0x2F9 + voice] = 0xFF
-    mem[LOAD + 0x2F4], mem[LOAD + 0x2F5] = 1, 3
     mem[0x1800] = SUBPATTERN & 0xFF
     mem[0x1880] = SUBPATTERN >> 8
     mem[SUBPATTERN : SUBPATTERN + len(subpattern)] = subpattern
     return mem
 
 
-def _trace(order, subpattern):
-    """The SID registers and each voice's stream pointer after every call."""
-    layout = {
+def _layout():
+    """The binding of the synthetic V0x tune: every voice starts at its order list's first byte."""
+    return {
         "load": LOAD,
         "subptr_lo": 0x1800,
         "subptr_hi": 0x1880,
         "gate_ctrl": 0x41,
         "gateoff_ctrl": 0x40,
+        "init_tempo": 1,
+        "init_speed": 3,
+        "init_left": [0xFF] * 3,
+        "init_beats": [3] * 3,
+        "init_transpose": [0] * 3,
+        "init_inside": [0] * 3,
+        "init_shift": [0] * 3,
+        "init_detune": [0] * 3,
+        "init_freq": [0] * 3,
+        "init_base": list(ORDERS),
+        "init_cur": list(ORDERS),
     }
-    program = elaborate(spec("v0x"), layout)
+
+
+def _trace(order, subpattern):
+    """The SID registers and where each voice has read to (order list, subpattern) per call."""
+    program = elaborate(spec("v0x"), _layout())
     mem = _memory(bytes(order), bytes(subpattern))
+    frame, state = compile_program(program), controls(program)
+    slots = {program.keys[name]: i for i, (name, _w, _d) in enumerate(program.controls)}
+    where = [
+        slots[f"voice[{v}].{cell}"] for v in range(3) for cell in ("orderpos", "subpos")
+    ]
     out = []
     for _ in range(CALLS):
-        run(program, mem)
-        out.append(
-            (
-                bytes(mem[0xD400:0xD419]),
-                bytes(mem[LOAD + 0x2DF : LOAD + 0x2E5]),
-            )
-        )
+        frame(mem.__getitem__, mem.__setitem__, state, None, {})
+        out.append((bytes(mem[0xD400:0xD419]), tuple(state[i] for i in where)))
     return out
 
 
@@ -128,10 +137,6 @@ def test_the_listing_shows_the_bytes_by_role(hvsc):
 
 def test_the_synthetic_layout_matches_the_song_binding(hvsc):
     song = reader.read(hvsc(V0X_REFERENCES[0]))
-    assert set(v0x_layout(song)) == {
-        "load",
-        "subptr_lo",
-        "subptr_hi",
-        "gate_ctrl",
-        "gateoff_ctrl",
-    }
+    layout = v0x_layout(song, JchPlayer(song).view())
+    assert set(layout) == set(_layout())
+    assert elaborate(spec("v0x"), layout).name == "v0x"

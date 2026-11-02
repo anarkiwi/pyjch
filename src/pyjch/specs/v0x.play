@@ -1,180 +1,129 @@
+// JCH NewPlayer V0x. The tempo counts calls; each time it runs out every voice's beat counter
+// counts down. A voice whose counter has run out reads on: its order list names subpatterns
+// ($80..$9F sets the transpose, from $A0 it restarts), a subpattern is note, rest ($00), tie
+// ($7F) and duration ($80..$8F) bytes up to $90.., where it returns to the order list.
 spec v0x;
 
 layout {
   load, subptr_lo, subptr_hi: addr;
   gate_ctrl, gateoff_ctrl: byte;
+  init_tempo, init_speed: byte;
+  init_left, init_beats, init_transpose, init_inside, init_shift, init_detune, init_freq,
+  init_base, init_cur: list;
 }
 
-cell sid: u8[32] @ 0xD400 out;
-cell zp_lo: u8 @ 0xFB scratch;
-cell zp_hi: u8 @ 0xFC scratch;
+event order_byte: row;
+event sub_byte: row;
+event sub_start: row;
 
 cell ftab: u8[192] @ L.load + 0x21F ro;
-cell subtab_lo: u8[128] @ L.subptr_lo ro;
-cell subtab_hi: u8[128] @ L.subptr_hi ro;
+cell subpatterns: u16[128] @ (L.subptr_lo, L.subptr_hi) ro;
 
-cell tempo: u8 @ L.load + 0x2F4;
-cell tempo_reload: u8 @ L.load + 0x2F5;
-cell gate_ctrs: u8[3] @ L.load + 0x2F9;
+state tempo: u8 = L.init_tempo;
+state speed: u8 = L.init_speed;
 
-machine enter {
-  signal lo: u8 = 0;
-  signal hi: u8 = 0;
-  step {
-    lo := zp_lo;
-    hi := zp_hi;
-  }
-}
-
-machine leave {
-  step {
-    zp_lo := enter.lo;
-    zp_hi := enter.hi;
-  }
-}
-
-machine voice[x in 0..3] {
-  cell vtranspose: u8 @ L.load + 0x00A + x;
-  cell detune: u8 @ L.load + 0x00D + x;
-  cell cur_lo: u8 @ L.load + 0x2DF + x;
-  cell cur_hi: u8 @ L.load + 0x2E2 + x;
-  cell base_lo: u8 @ L.load + 0x2E5 + x;
-  cell base_hi: u8 @ L.load + 0x2E8 + x;
-  cell save_lo: u8 @ L.load + 0x2EB + x;
-  cell save_hi: u8 @ L.load + 0x2EE + x;
-  cell sid_off: u8 @ L.load + 0x2F1 + x;
-  cell gate_reload: u8 @ L.load + 0x2F6 + x;
-  cell gate_flag: u8 @ L.load + 0x2FC + x;
-  cell freq_lo: u8 @ L.load + 0x2FF + x;
-  cell freq_hi: u8 @ L.load + 0x302 + x;
-  cell transpose: u8 @ L.load + 0x305 + x;
-  cell depth: u8 @ L.load + 0x308 + x;
-
-  proc inc_fb() {
-    zp_lo += 1;
-    if zp_lo == 0 {
-      zp_hi += 1;
-    }
-  }
-
-  proc note_advance() {
-    let st: u8 = 1;
-    let bv: u8 = 0;
-    while st != 0 bound 4096 {
-      if st == 1 {
-        gate_ctrs[x] := gate_reload;
-        st := 2;
-      } elif st == 2 {
-        if depth == 0 {
-          st := 3;
-        } else {
-          st := 5;
-        }
-      } elif st == 3 {
-        stream order = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:v0x_orderlist";
-        bv := ind(0xFB, 0);
-        if bv < 0x80 {
-          save_lo := zp_lo;
-          save_hi := zp_hi;
-          zp_lo := subtab_lo[u16(bv)];
-          zp_hi := subtab_hi[u16(bv)];
-          depth += 1;
-          st := 5;
-        } elif (bv & 0xE0) != 0x80 {
-          st := 4;
-        } else {
-          transpose := ((bv & 0x1F) - 0x0C) << 1;
-          inc_fb();
-          st := 3;
-        }
-      } elif st == 4 {
-        zp_lo := base_lo;
-        zp_hi := base_hi;
-        st := 1;
-      } elif st == 5 {
-        stream notes = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:v0x_subpattern";
-        bv := ind(0xFB, 0);
-        if bv >= 0x80 {
-          st := 8;
-        } else {
-          let c = bv << 1;
-          if c == 0 {
-            st := 6;
-          } elif c == 0xFE {
-            st := 7;
-          } else {
-            let idx = c + vtranspose + transpose;
-            let cy = carry(ftab[u16(idx)], detune);
-            freq_lo := ftab[u16(idx)] + detune;
-            freq_hi := ftab[u16(idx) + 1] + u8(cy);
-            gate_flag := 0;
-            st := 11;
-          }
-        }
-      } elif st == 6 {
-        sid[u16(sid_off) + 4] := L.gateoff_ctrl;
-        st := 7;
-      } elif st == 7 {
-        gate_flag := 1;
-        st := 11;
-      } elif st == 8 {
-        if (bv & 0xF0) == 0x80 {
-          gate_ctrs[x] := bv & 0x0F;
-          gate_reload := bv & 0x0F;
-          st := 10;
-        } else {
-          st := 9;
-        }
-      } elif st == 9 {
-        depth := 0;
-        zp_lo := save_lo;
-        zp_hi := save_hi;
-        st := 10;
-      } elif st == 10 {
-        inc_fb();
-        st := 2;
-      } else {
-        inc_fb();
-        st := 0;
-      }
-    }
-  }
-
-  step {
-    zp_lo := cur_lo;
-    zp_hi := cur_hi;
-    if neg(gate_ctrs[x]) {
-      note_advance();
-    } else {
-      gate_flag := 1;
-    }
-    if gate_flag == 0 {
-      sid[u16(sid_off) + 4] := L.gate_ctrl;
-    }
-    sid[u16(sid_off)] := freq_lo;
-    sid[u16(sid_off) + 1] := freq_hi;
-    cur_lo := zp_lo;
-    cur_hi := zp_hi;
+counter beat: tempo { on frame -= 1; reload speed; wrap when tempo == 1 -> row; }
+handler count_down on row {
+  for k in 0..3 {
+    voice[k].left -= 1;
   }
 }
 
 machine clock {
   step {
-    tempo -= 1;
-    if tempo == 0 {
-      tempo := tempo_reload;
-      gate_ctrs[0] -= 1;
-      gate_ctrs[1] -= 1;
-      gate_ctrs[2] -= 1;
+    fire frame;
+  }
+}
+
+machine voice[x in 0..3] {
+  record chip @ 0xD400 stride 7 { out_freq: u16; out_ctrl: u8 @ 4; }
+
+  state left: u8 = L.init_left[x];
+  state beats: u8 = L.init_beats[x];
+  state freq: u16 = L.init_freq[x];
+  state transpose: u8 = L.init_transpose[x];
+  state inside: u8 = L.init_inside[x];
+  state shift: u8 = L.init_shift[x];
+  state detune: u8 = L.init_detune[x];
+  state base: u16 = L.init_base[x];
+  state orderpos: u8 = L.init_cur[x] - L.init_base[x];
+  state subpos: u8 = 0;
+  state entry: u8 = 0;
+  state byte: u8 = 0;
+
+  signal retrigger: bool = false;
+
+  cursor orderlist {
+    stream @ base grammar "pyjch.grammar:GRAMMAR:v0x_orderlist";
+    pos orderpos;
+    on order_byte next;
+    field item -> entry = item;
+  }
+
+  cursor subpattern {
+    stream @ subpatterns[entry] grammar "pyjch.grammar:GRAMMAR:v0x_subpattern";
+    pos subpos;
+    on sub_byte next;
+    on sub_start reset;
+    field item -> byte = item;
+  }
+
+  // Reads on until a note, rest or tie has been read.
+  proc read_on() {
+    left := beats;
+    let reading = true;
+    while reading bound 4096 {
+      if inside == 0 {
+        react orderlist on order_byte();
+        match entry {
+          0x00..0x7F => {
+            inside := 1;
+            fire sub_start;
+          }
+          0x80..0x9F => transpose := ((entry & 0x1F) - 0x0C) << 1;
+          _ => {
+            orderpos := 0;
+            left := beats;
+          }
+        }
+      } else {
+        react subpattern on sub_byte();
+        match byte {
+          0x80..0x8F => {
+            left := byte & 0x0F;
+            beats := byte & 0x0F;
+          }
+          0x90..0xFF => inside := 0;
+          0x00 => {
+            out_ctrl := L.gateoff_ctrl;
+            reading := false;
+          }
+          0x7F => reading := false;
+          _ => {
+            let at = u16((byte << 1) + shift + transpose);
+            freq := word(ftab[at], ftab[at + 1]) + u16(detune);
+            retrigger := true;
+            reading := false;
+          }
+        }
+      }
     }
+  }
+
+  step {
+    if neg(left) {
+      read_on();
+    }
+    if retrigger {
+      out_ctrl := L.gate_ctrl;
+    }
+    out_freq := freq;
   }
 }
 
 schedule {
-  enter;
   voice[2];
   voice[1];
   voice[0];
   clock;
-  leave;
 }

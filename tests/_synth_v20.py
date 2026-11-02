@@ -75,6 +75,10 @@ def build_image(hard_restart=0x09):
     )  # JMP init ; JMP play
     img[0x006:0x009] = b"\x01\x01\x01"  # voice ACTIVE flags
     img[0x00A] = 0xF0  # RES/FILT accumulator seed
+    for voice in range(3):  # each voice's SID registers and filter masks
+        img[0x740 + voice] = 7 * voice
+        img[0x73A + voice] = 1 << voice
+        img[0x73D + voice] = 0xFF ^ (1 << voice)
     img[0x020] = 0x00  # id-string flag = 0 -> skip optional init block
     frags = _fragments()
     img[0x030 : 0x030 + len(frags)] = frags

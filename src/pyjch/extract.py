@@ -358,7 +358,7 @@ def _family_provenance(model, tables: _Tables, notes: List[str]) -> Provenance:
     )
 
 
-def _extract_tune(model, bases: Optional[V20Bases]) -> Tune:
+def _extract_tune(model, bases: Optional[V20Bases], variant: bool = True) -> Tune:
     """Decode ``model``: the full V20 build when ``bases`` resolved, else the family subset."""
     load = model.load_addr
     end = load + len(model.image)
@@ -413,7 +413,10 @@ def _extract_tune(model, bases: Optional[V20Bases]) -> Tune:
         provenance = _family_provenance(model, tables, notes)
     else:
         provenance = Provenance(
-            "v20", model.version, asdict(bases), variant=_variant_info(model)
+            "v20",
+            model.version,
+            asdict(bases),
+            variant=_variant_info(model) if variant else {},
         )
     tune = Tune(
         name=model.name,
@@ -440,13 +443,14 @@ def _extract_tune(model, bases: Optional[V20Bases]) -> Tune:
     return tune
 
 
-def extract(model) -> Tune:
+def extract(model, variant: bool = True) -> Tune:
     """Extract a neutral :class:`~pyjch.songmodel.Tune` from a parsed model.
 
     Full V20 decode when the tune is the V20 code build
     (:func:`pyjch.player.playable`), else the family subset with absent
     tables noted.  Raises :class:`~pyjch.errors.SidParseError` for a V0x
     :class:`~pyjch.model.Song` (out of scope for this wavetable-family export).
+    ``variant=False`` leaves the provenance's variant facets out.
     """
     if isinstance(model, Song):
         raise SidParseError(
@@ -455,4 +459,4 @@ def extract(model) -> Tune:
         )
     if not isinstance(model, NewPlayerModel):
         raise SidParseError(f"cannot extract a Tune from {type(model).__name__}")
-    return _extract_tune(model, player.playable(model))
+    return _extract_tune(model, player.v20_bases(model)[0], variant)

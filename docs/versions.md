@@ -8,7 +8,7 @@ pyjch reads JCH NewPlayer tunes at three levels:
    `pyjch.reader.parse` returns a `Song`; `pyjch.player.JchPlayer` replays it
    (the playspec `v0x.play`) register-for-register, validated frame-for-frame
    against the `sidtrace` oracle for **Flexible** (Scorpio) and **Simple_Tune**
-   (JCH), and memory-exact against the tune's own 6502 run.
+   (JCH).
 
 2. **Byte-exact V20 player** — the **`JCH_NewPlayer_V20`** two-column wavetable
    engine (the largest HVSC bucket), reverse-engineered in
@@ -16,9 +16,9 @@ pyjch reads JCH NewPlayer tunes at three levels:
    jch-player.asm}` against its reference tune
    `24th_Amaranth_Grand_Prix_3.sid`. `pyjch.player.JchPlayer` runs the playspec
    `newplayer.play` (the full 64K-image play routine: groove tempo, two parallel wavetable columns, PW
-   ping-pong, portamento, vibrato, global filter sweep, hard restart) on the memory
+   ping-pong, portamento, vibrato, global filter sweep, hard restart) from the state
    the tune's own init leaves, and is validated **frame-exact** against the
-   `sidtrace` register oracle and **memory-exact** against the tune's own 6502 run.
+   `sidtrace` register oracle and variable-exact against the tune's own 6502 run.
     `pyjch.player.playable(model)` gates this tier: it discovers every
    V20 data table (subtune, wave note/ctrl columns, filter/PW programs,
    instruments, pattern pointers, command params, pitch table) plus the

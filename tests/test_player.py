@@ -121,7 +121,8 @@ def test_v0x_loops_forever_until_max_frames(relpath, hvsc):
 def test_hard_restart_immediate_selected_per_build():
     model = reader.parse(synth.build_psid(hard_restart=0x11))
     assert playable(model).hardrestart == 0x11
-    assert v20_layout(model, playable(model))["hardrestart"] == 0x11
+    view = JchPlayer(model).view()
+    assert v20_layout(model, playable(model), view)["hardrestart"] == 0x11
 
 
 @pytest.mark.parametrize(

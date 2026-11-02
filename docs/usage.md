@@ -41,7 +41,7 @@ pysidtracker export tune.sid tune.prg --format editor-prg --driver work.prg   # 
 value per facet, each with its source (`detected@$addr`, `default` or
 `inferred(...)`). The facets are `model`, `version` (play-prologue class),
 `engine` (`v0x`/`v20`/`emu`), `v20_gate` (`reference`, or the sub-build gate that
-rejected the V20 spec player), `hard_restart`, `wave_layout`, `pitch_form`,
+rejected the V20 spec player: a code gate, or a `pyjch.refusal` reason), `hard_restart`, `wave_layout`, `pitch_form`,
 `ctrl_shadow_form`, `entry_points` and `v0x_layout`. It is the `variant` hook of
 the registered `jch` format, so the survey `info` and the whydiff/pathdiff site
 labels come from it, and `Tune.provenance.variant` records the same facets.
