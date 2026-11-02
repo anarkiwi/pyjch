@@ -8,8 +8,9 @@ spec newplayer;
 layout {
   pitch, wave_note, wave_ctrl, filter, pulse, instruments, patlo, pathi, cmdparam,
   rearm_ad, rearm_sr: addr;
+  wild: list;
   hardrestart: byte;
-  init_vol, init_resfilt, init_scratch, init_tempo, init_groove_ctr, init_groove_pos, init_fpos, init_fdwell,
+  init_vol, init_resfilt, init_scratch, init_vibdelta, init_tempo, init_groove_ctr, init_groove_pos, init_fpos, init_fdwell,
   init_cutoff, init_fmode, init_delay: byte;
   init_active, init_freq, init_note, init_trans, init_gate, init_inst, init_start, init_rst,
   init_patpos, init_length, init_remaining, init_ctrl, init_detune, init_porta_on, init_vib_on,
@@ -47,6 +48,8 @@ table instrument @ L.instruments stride 8 {
 cell patterns: u16[256] @ (L.patlo, L.pathi) ro;
 table command @ L.cmdparam stride 2 { kind: u8; arg: u8; }
 cell pitch: u16[129] @ L.pitch ro;
+// The 96 notes are followed by the player's variables; L.wild names, for each byte a note past
+// them can read, the variable there (kind * 4 + voice; 0: the byte is not a variable).
 cell wave_note: u8[256] @ L.wave_note ro;
 cell wave_ctrl: u8[256] @ L.wave_ctrl ro;
 view pulse_step @ pwrow { value @ 0; step @ 1; rate @ 2; next @ 3; }
@@ -59,6 +62,7 @@ cell rearm_sr: u8 @ L.rearm_sr ro;
 state vol: u8 = L.init_vol;
 state resfilt: u8 = L.init_resfilt;
 state scratch: u8 = L.init_scratch;
+state vibdelta: u8 = L.init_vibdelta;
 state delay: u8 = L.init_delay;
 state tempo: u8 = L.init_tempo;
 state groove_ctr: u8 = L.init_groove_ctr;
@@ -235,6 +239,50 @@ machine voice[x in 0..3] {
     }
   }
 
+  proc wild_byte(at: u8, memory: u8) -> u8 {
+    for p in 0..66 {
+      if at == p {
+        for k in 0..3 {
+          if L.wild[p] & 3 == k {
+            match L.wild[p] >> 2 {
+              1 => return vibdelta;
+              2 => return lo(voice[k].start + u16(voice[k].orderpos));
+              3 => return hi(voice[k].start + u16(voice[k].orderpos));
+              4 => return groove_ctr;
+              5 => return tempo;
+              6 => return voice[k].tie;
+              7 => return voice[k].vib_on;
+              8 => return voice[k].porta_on;
+              9 => return voice[k].patpos;
+              10 => return voice[k].rearming;
+              11 => return voice[k].length;
+              12 => return voice[k].remaining;
+              13 => return voice[k].ctrl;
+              14 => return voice[k].ported;
+              15 => return voice[k].vibed;
+              16 => return voice[k].quiet;
+              17 => return voice[k].vibwait;
+              18 => return voice[k].vibperiod;
+              _ => return memory;
+            }
+          }
+        }
+      }
+    }
+    return memory;
+  }
+
+  proc pitch_word(index: u8) -> u16 {
+    let word_at = pitch[u16(index)];
+    if index < 96 {
+      return word_at;
+    }
+    let at = 2 * (index - 96);
+    let low = wild_byte(at, lo(word_at));
+    let high = wild_byte(at + 1, hi(word_at));
+    return word(low, high);
+  }
+
   proc resolve_wave() {
     match wave_note[wtptr] {
       0x7E => wtptr -= 1;
@@ -263,7 +311,8 @@ machine voice[x in 0..3] {
       freq := u16(a) << 8;
     } else {
       scratch := ite(neg(a), 1, 0);
-      freq := pitch[u16(ite(neg(a), a, a + note + trans) & 0x7F)] + u16(detune);
+      let tuned = pitch_word(ite(neg(a), a, a + note + trans) & 0x7F);
+      freq := tuned + u16(detune);
     }
     fire wave_tick;
     if porta_on != 0 {
@@ -272,9 +321,12 @@ machine voice[x in 0..3] {
         freq += portaacc;
       }
     } elif vib_on != 0 && quiet == 0 {
-      let span = pitch[u16(note & 0x7F) + 1] - pitch[u16(note & 0x7F)];
+      let here = pitch_word(note & 0x7F);
+      let above = pitch_word((note & 0x7F) + 1);
+      let span = above - here;
       vibstep := (span & 0xFF | u16(hi(span) + vibbacc) << 8) >> ite(neg(vibdep - 1), 0, vibdep);
       scratch := hi(vibstep);
+      vibdelta := lo(vibstep);
       fire vib_tick;
       freq += vibacc;
     }

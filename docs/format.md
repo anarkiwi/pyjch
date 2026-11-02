@@ -169,24 +169,33 @@ a flag bit, not as the byte the 6502 keeps (`pyjch.constants.VARIABLE_SHIFTS`).
 `pyjch.player.play_variables` names the work-area byte of each, so a run can be compared
 with the tune's own 6502 (`tests/test_specplayer.py`, `-m oracle`).
 
+### Notes past the pitch table
+
+The pitch table has 96 notes and the player's variables follow it in every build. A song can
+select a note up to 127 (the sum of a pattern note, the order list's transpose and a wave row,
+taken modulo 128), and the vibrato reads the next note too, so up to 66 bytes past the table
+are read as frequency bytes. The binder reports, per byte, which variable sits there (`wild`
+in the layout, `pyjch.player.pitch_tail`: variable kind times four plus its voice), and the
+spec reads that variable's state in place of memory (`wild_byte`): the vibrato temporary
+`vibdelta`, a voice's order pointer (the order list's start plus the cursor's position), the
+groove counter, tempo and a voice's tie, vibrato, portamento, pattern position, rearm flag,
+duration, remaining, control, per-row flags and vibrato wait and period. Bytes that are not
+variables the spec writes (the restart pointer, filter masks, register offsets, detune) are
+read from memory. A value written earlier in the call is read as it then stands.
+
 ### Refused tunes
 
-The spec keeps no variable in memory, so a tune whose song data reads or writes one as
-memory is played by `EmuPlayer` instead (`pyjch.refusal`, the `v20_gate` facet):
+The spec keeps no variable in memory, so a tune whose tables or voice cells lie where it
+cannot place them is played by `EmuPlayer` instead (`pyjch.refusal`, the `v20_gate` facet):
 
 | Reason | Fact |
 | ------ | ---- |
 | `voice-registers` | a voice's SID registers are not `7 * voice` on, or its filter masks are not `1 << voice` (cells `$740`-`$745` and `$73A`-`$73F` from the code base) |
 | `variables-over-data` | a table the spec reads lies over a byte the player writes |
-| `pitch-past-table` | the song can select a note past the pitch table's 96, whose next bytes are the player's variables: the sum of a pattern note, the order list's transpose and a row of the instrument's wave program, taken modulo 128, reaches 96 within the program's first rows, or an absolute row names a note from 96 |
-| `song-unparsed` | the song's streams do not parse, so what it can reach is not known |
 
-`pitch-past-table` is conservative: it follows each voice's notes, transposes and
-instruments through the order lists and bounds how far a wave program runs in a note's
-ticks, so it refuses tunes whose wave program would not reach the row in time. The
-refused HVSC tunes are listed in `tests/fixtures/jch_refused.txt`
+The refused HVSC tunes are listed in `tests/fixtures/jch_refused.txt`
 (`scripts/spec_tunes.py` writes it); `tests/test_refusal.py` checks each against its
-reason in the `oracle` job.
+reason in the `oracle` job. A V0x tune is refused for the first reason too.
 
 ### Checking a spec against a recording
 
