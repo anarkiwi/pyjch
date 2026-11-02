@@ -12,7 +12,6 @@ from pyjch.player import JchPlayer
 
 from tests import _synth_v20 as synth
 
-BASE = 0x1000  # the code base of the synthetic tune
 CALLS = 600
 VOLUME_SLOT = 4  # the synthetic pattern's own volume command, replaced by a patch
 
@@ -40,7 +39,7 @@ def _waveforms(note_col, ctrl_col):
 
 
 ROWS = b"\x0c\x10"
-PAD = b"\x00\x00\x00"
+PAD = b"\x7f\x7f\x7f"
 
 
 def test_a_jump_row_returns_to_the_row_its_control_byte_names():
@@ -68,16 +67,16 @@ def _cells(first, second, slot=3):
         patches.append((synth.CMDPARAM + 2 * VOLUME_SLOT, b"\x70\x00"))
     player = JchPlayer(_model(patches))
     player.render_grid(CALLS)
-    mem = player.memory
     return {
-        "tempo": mem[BASE + 0x747],
-        "volume": mem[BASE + 0x009],
-        "vibrato": mem[BASE + 0x77E],
-        "portamento": mem[BASE + 0x79E],
+        "tempo": player.state("tempo"),
+        "volume": player.state("vol"),
+        "vibrato": player.state("voice[0].vibdep"),
+        "portamento": player.state("voice[0].portaslide") & 0xFF,
     }
 
 
-UNTOUCHED = _cells(0x70, 0x09)  # a patch entry changes none of the four
+PARAM = 0x01
+UNTOUCHED = _cells(0x70, PARAM)  # a patch entry changes none of the four
 KIND_CELL = {
     "tempo": "tempo",
     "volume": "volume",
@@ -91,13 +90,13 @@ FIRST_BYTES += [0xDF, 0xE0, 0xEF, 0xF0, 0xFF]
 @pytest.mark.parametrize("first", FIRST_BYTES)
 def test_the_kind_the_grammar_gives_a_command_is_the_one_the_player_runs(first):
     kind = grammar.GRAMMAR.parse_exact(
-        bytes([first, 0x09]), grammar.COMMAND_TABLE
+        bytes([first, PARAM]), grammar.COMMAND_TABLE
     ).entries[0][0]
-    after = _cells(first, 0x09)
+    after = _cells(first, PARAM)
     changed = {name for name in after if after[name] != UNTOUCHED[name]}
     assert changed == ({KIND_CELL[kind]} if kind in KIND_CELL else set())
     if changed:
-        assert after[KIND_CELL[kind]] == 0x09
+        assert after[KIND_CELL[kind]] == PARAM
 
 
 def test_the_second_byte_is_the_parameter_each_kind_applies():

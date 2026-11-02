@@ -1,590 +1,479 @@
+// JCH NewPlayer V20. The groove counts ticks down; a voice sounds its instrument every tick,
+// reads its next row on tick 2 of the row's last beat and starts it on tick 0. An order list
+// names patterns ($80.. transposes the next, $FF loops, $FE stops the voice); a pattern is
+// duration, instrument and command bytes up to a note, rest ($00) or hold ($7E), and ends at $7F.
+// An instrument's pulse, filter and wave programs are tables of steps linked by a next offset.
 spec newplayer;
 
 layout {
-  cb, pitch, subtune, wave_note, wave_ctrl, filterprog, pwprog, instruments: addr;
-  patlo, pathi, cmdparam, rearm_ad, rearm_sr: addr;
+  pitch, wave_note, wave_ctrl, filter, pulse, instruments, patlo, pathi, cmdparam,
+  rearm_ad, rearm_sr: addr;
   hardrestart: byte;
+  init_vol, init_resfilt, init_scratch, init_tempo, init_groove_ctr, init_groove_pos, init_fpos, init_fdwell,
+  init_cutoff, init_fmode, init_delay: byte;
+  init_active, init_freq, init_note, init_trans, init_gate, init_inst, init_start, init_rst,
+  init_patpos, init_length, init_remaining, init_ctrl, init_detune, init_porta_on, init_vib_on,
+  init_vibrate, init_vibwait, init_vibperiod, init_vibdir, init_vibacc, init_vibdep, init_vibbacc,
+  init_pwcur, init_pwdw, init_pw, init_pwdir, init_wtptr, init_wtdw, init_wtdwrel, init_rearming, init_tie,
+  init_portaslide, init_portadir, init_portaacc, init_s_trans, init_s_inst, init_s_note,
+  init_s_porta, init_s_vib, init_s_gate, init_s_sr, init_ad, init_sr, init_ported, init_vibed, init_quiet: list;
 }
 
-cell sid: u8[32] @ 0xD400 out;
-cell zp_lo: u8 @ 0xFB scratch;
-cell zp_hi: u8 @ 0xFC scratch;
+event fetch: tick;
+event order_byte: fetch;
+event pattern_byte: fetch;
+event pattern_end: fetch;
+event beat: tick;
+event swing: beat;
+event pulse_tick: tick;
+event pulse_row: pulse_tick;
+event filter_tick: tick;
+event filter_row: filter_tick;
+event wave_tick: tick;
+event wave_row: wave_tick;
+event porta_tick: tick;
+event vib_tick: tick;
+event vib_turn: vib_tick;
 
-cell pitch: u8[260] @ L.pitch ro;
+cell cutoff_reg: u8 @ 0xD416 out;
+cell resfilt_reg: u8 @ 0xD417 out;
+cell modevol_reg: u8 @ 0xD418 out;
+
+// Song data: instruments, pattern pointers, command table, and the programs' tables.
+table instrument @ L.instruments stride 8 {
+  ad: u8; sr: u8; wave: u8; filter: u8; filter_start: u8; pulse_start: u8;
+  wave_start: u8; wave_release: u8;
+}
+cell patterns: u16[256] @ (L.patlo, L.pathi) ro;
+table command @ L.cmdparam stride 2 { kind: u8; arg: u8; }
+cell pitch: u16[129] @ L.pitch ro;
 cell wave_note: u8[256] @ L.wave_note ro;
 cell wave_ctrl: u8[256] @ L.wave_ctrl ro;
-cell fprog: u8[260] @ L.filterprog ro;
-cell pwprog: u8[260] @ L.pwprog ro;
-cell cmdparam: u8[128] @ L.cmdparam ro;
-cell patlo: u8[256] @ L.patlo ro;
-cell pathi: u8[256] @ L.pathi ro;
-cell inst: u8[256] @ L.instruments;
+view pulse_step @ pwrow { value @ 0; step @ 1; rate @ 2; next @ 3; }
+view filter_step @ fptr { cut @ 0; step @ 1; dwell @ 2; next @ 3; }
+cell groove: u8[2] @ L.filter ro;
+cell filter_voice: u8 @ L.filter + 3 ro;
 cell rearm_ad: u8 @ L.rearm_ad ro;
 cell rearm_sr: u8 @ L.rearm_sr ro;
 
-cell vol: u8 @ L.cb + 0x009;
-cell resfilt: u8 @ L.cb + 0x00A;
-cell scratch: u8 @ L.cb + 0x00B scratch;
-cell idflag: u8 @ L.cb + 0x020;
-cell vibdeltalo: u8 @ L.cb + 0x72D;
-cell tempo_rel: u8 @ L.cb + 0x747;
-cell grv_ctr: u8 @ L.cb + 0x746;
-cell grv_idx: u8 @ L.cb + 0x794;
-cell flt_cur: u8 @ L.cb + 0x790;
-cell flt_dw: u8 @ L.cb + 0x791;
-cell flt_cut: u8 @ L.cb + 0x792;
-cell flt_mode: u8 @ L.cb + 0x793;
-cell delay_en: u8 @ L.cb + 0x7CA;
+state vol: u8 = L.init_vol;
+state resfilt: u8 = L.init_resfilt;
+state scratch: u8 = L.init_scratch;
+state delay: u8 = L.init_delay;
+state tempo: u8 = L.init_tempo;
+state groove_ctr: u8 = L.init_groove_ctr;
+state groove_pos: u8 = L.init_groove_pos;
+state fptr: u16 = u16(L.filter) + u16(L.init_fpos);
+state fdwell: u8 = L.init_fdwell;
+state cutoff: u8 = L.init_cutoff;
+state fmode: u8 = L.init_fmode;
 
-machine enter {
-  signal lo: u8 = 0;
-  signal hi: u8 = 0;
-  step {
-    lo := zp_lo;
-    hi := zp_hi;
+// The groove counts down once per call and reloads with the tempo; a tempo below 2 reads the
+// reload from the two-entry groove instead, alternating.
+counter ticks: groove_ctr {
+  on frame -= 1;
+  reload ite(tempo < 2, groove[groove_pos], tempo);
+  wrap when neg(groove_ctr - 1) -> beat;
+}
+counter swung: groove_pos { on swing -= 1; reload 1; }
+handler on_beat on beat {
+  if tempo < 2 {
+    fire swing;
   }
 }
 
-machine leave {
-  step {
-    zp_lo := enter.lo;
-    zp_hi := enter.hi;
+// The filter program: a step sets the cutoff unless $FF and dwells; the cutoff ramps by the
+// step's amount each tick.
+counter filter_dwell: fdwell {
+  on filter_tick -= 1;
+  wrap when neg(fdwell - 1) -> filter_row;
+}
+handler filter_next on filter_row {
+  fptr := L.filter + u16(filter_step.next);
+  load_filter();
+}
+accum filter_sweep: cutoff { step filter_step.step; on filter_tick ramp; }
+
+proc load_filter() {
+  if filter_step.cut != 0xFF {
+    cutoff := filter_step.cut;
   }
+  fdwell := filter_step.dwell;
 }
 
 machine clock {
   step {
-    grv_ctr -= 1;
-    if neg(grv_ctr) {
-      grv_ctr := tempo_rel;
-      if tempo_rel < 2 {
-        grv_ctr := fprog[u16(grv_idx)];
-        grv_idx -= 1;
-        if neg(grv_idx) {
-          grv_idx := 1;
-        }
-      }
-    }
+    fire frame;
   }
 }
 
 machine voice[x in 0..3] {
-  cell active: u8 @ L.cb + 0x006 + x;
-  cell flo: u8 @ L.cb + 0x00C + x;
-  cell fhi: u8 @ L.cb + 0x00F + x;
-  cell note: u8 @ L.cb + 0x014 + x;
-  cell oct: u8 @ L.cb + 0x017 + x;
-  cell gatemask: u8 @ L.cb + 0x01A + x;
-  cell instn: u8 @ L.cb + 0x01D + x;
-  cell ordlo: u8 @ L.cb + 0x72E + x;
-  cell ordhi: u8 @ L.cb + 0x731 + x;
-  cell rstlo: u8 @ L.cb + 0x734 + x;
-  cell rsthi: u8 @ L.cb + 0x737 + x;
-  cell routeset: u8 @ L.cb + 0x73A + x;
-  cell routeclr: u8 @ L.cb + 0x73D + x;
-  cell stride: u8 @ L.cb + 0x740 + x;
-  cell fine: u8 @ L.cb + 0x743 + x;
-  cell ndelay: u8 @ L.cb + 0x748 + x;
-  cell viben: u8 @ L.cb + 0x74B + x;
-  cell portaen: u8 @ L.cb + 0x74E + x;
-  cell patcur: u8 @ L.cb + 0x751 + x;
-  cell instflag: u8 @ L.cb + 0x754 + x;
-  cell ndurrel: u8 @ L.cb + 0x757 + x;
-  cell ndur: u8 @ L.cb + 0x75A + x;
-  cell ctrlsh: u8 @ L.cb + 0x75D + x;
-  cell portapend: u8 @ L.cb + 0x760 + x;
-  cell viben2: u8 @ L.cb + 0x763 + x;
-  cell vibsup: u8 @ L.cb + 0x766 + x;
-  cell vibdwctr: u8 @ L.cb + 0x769 + x;
-  cell vibdwrel: u8 @ L.cb + 0x76C + x;
-  cell vibbstep: u8 @ L.cb + 0x76F + x;
-  cell vibbacc: u8 @ L.cb + 0x772 + x;
-  cell vibdir: u8 @ L.cb + 0x775 + x;
-  cell vibacclo: u8 @ L.cb + 0x778 + x;
-  cell vibacchi: u8 @ L.cb + 0x77B + x;
-  cell vibdep: u8 @ L.cb + 0x77E + x;
-  cell pwcur: u8 @ L.cb + 0x781 + x;
-  cell pwdw: u8 @ L.cb + 0x784 + x;
-  cell pwacclo: u8 @ L.cb + 0x787 + x;
-  cell pwacchi: u8 @ L.cb + 0x78A + x;
-  cell pwdir: u8 @ L.cb + 0x78D + x;
-  cell wtptr: u8 @ L.cb + 0x795 + x;
-  cell wtdw: u8 @ L.cb + 0x798 + x;
-  cell wtdwrel: u8 @ L.cb + 0x79B + x;
-  cell portaslo: u8 @ L.cb + 0x79E + x;
-  cell portashi: u8 @ L.cb + 0x7A1 + x;
-  cell portadir: u8 @ L.cb + 0x7A4 + x;
-  cell portaacclo: u8 @ L.cb + 0x7A7 + x;
-  cell portaacchi: u8 @ L.cb + 0x7AA + x;
-  cell stgtr: u8 @ L.cb + 0x7AD + x;
-  cell stginst: u8 @ L.cb + 0x7B0 + x;
-  cell stgnote: u8 @ L.cb + 0x7B3 + x;
-  cell stgpen: u8 @ L.cb + 0x7B6 + x;
-  cell stgven: u8 @ L.cb + 0x7B9 + x;
-  cell stggate: u8 @ L.cb + 0x7BC + x;
-  cell adsh: u8 @ L.cb + 0x7BF + x;
-  cell srsh: u8 @ L.cb + 0x7C2 + x;
-  cell adovr: u8 @ L.cb + 0x7C5 + x;
-
-  proc blit() {
-    portapend := 0;
-    viben2 := 0;
-    vibsup := 0;
-    sid[u16(stride) + 2] := pwacclo;
-    sid[u16(stride) + 3] := pwacchi;
-    sid[0x16] := flt_cut;
-    sid[u16(stride)] := flo;
-    sid[u16(stride) + 1] := fhi;
-    sid[u16(stride) + 5] := adsh;
-    sid[u16(stride) + 6] := srsh;
-    sid[u16(stride) + 4] := ctrlsh & gatemask;
-    sid[0x18] := flt_mode | vol;
+  record chip @ 0xD400 stride 7 {
+    out_freq: u16; out_pw: u12; out_ctrl: u8; out_ad: u8; out_sr: u8;
   }
 
-  proc vibrato() {
-    if vibsup != 0 || viben == 0 {
-      blit();
-      return;
+  state active: u8 = L.init_active[x];
+  state freq: u16 = L.init_freq[x];
+  state note: u8 = L.init_note[x];
+  state trans: u8 = L.init_trans[x] >> 1;
+  state gate: u8 = L.init_gate[x];
+  state inst: u8 = L.init_inst[x] >> 3;
+  state detune: u8 = L.init_detune[x];
+  state ctrl: u8 = L.init_ctrl[x];
+  state porta_on: u8 = L.init_porta_on[x];
+  state vib_on: u8 = L.init_vib_on[x];
+  state rearming: u8 = L.init_rearming[x];
+
+  state start: u16 = L.init_start[x];
+  state loop: u8 = L.init_rst[x] - L.init_start[x];
+  state orderpos: u8 = 0;
+  state patpos: u8 = L.init_patpos[x];
+  state length: u8 = L.init_length[x];
+  state remaining: u8 = L.init_remaining[x];
+  state tie: u8 = L.init_tie[x];
+  state item: u8 = 0;
+
+  state s_trans: u8 = L.init_s_trans[x] >> 1;
+  state s_inst: u8 = L.init_s_inst[x] >> 3;
+  state s_note: u8 = L.init_s_note[x];
+  state s_porta: u8 = L.init_s_porta[x];
+  state s_vib: u8 = L.init_s_vib[x];
+  state s_gate: u8 = L.init_s_gate[x];
+  state s_sr: u8 = L.init_s_sr[x];
+  state ad: u8 = L.init_ad[x];
+  state sr: u8 = L.init_sr[x];
+  state ported: u8 = L.init_ported[x];
+  state vibed: u8 = L.init_vibed[x];
+  state quiet: u8 = L.init_quiet[x];
+
+  state pwrow: u16 = u16(L.pulse) + u16(L.init_pwcur[x]);
+  state pwdw: u8 = L.init_pwdw[x];
+  state pwdir: u8 = L.init_pwdir[x] >> 7;
+  state pw: u16 = L.init_pw[x];
+
+  state wtptr: u8 = L.init_wtptr[x];
+  state wtdw: u8 = L.init_wtdw[x];
+  state wtdwrel: u8 = L.init_wtdwrel[x];
+
+  state portaslide: u16 = L.init_portaslide[x];
+  state portadir: u8 = L.init_portadir[x] >> 5;
+  state portaacc: u16 = L.init_portaacc[x];
+
+  state vibrate: u8 = L.init_vibrate[x];
+  state vibwait: u8 = L.init_vibwait[x];
+  state vibperiod: u8 = L.init_vibperiod[x];
+  state vibdir: u8 = L.init_vibdir[x];
+  state vibacc: u16 = L.init_vibacc[x];
+  state vibdep: u8 = L.init_vibdep[x];
+  state vibbacc: u8 = L.init_vibbacc[x];
+
+  signal started: bool = false;
+  signal vibstep: u16 = 0;
+
+  cursor orderlist {
+    stream @ start grammar "pyjch.grammar:GRAMMAR:orderlist";
+    pos orderpos;
+    on order_byte next;
+    field entry -> s_trans = entry & 0x7F when neg(entry);
+  }
+
+  cursor pattern {
+    stream @ patterns[orderlist.ahead] grammar "pyjch.grammar:GRAMMAR:pattern";
+    pos patpos;
+    on pattern_byte next;
+    on pattern_end reset;
+    field byte -> item = byte;
+  }
+
+  // The beat counts rows: when a note's rows run out the next one starts.
+  counter row_left: remaining {
+    on row -= 1;
+    reload length;
+    wrap when neg(remaining - 1) -> note;
+  }
+
+  // Pulse width: a step may set the width, then adds or subtracts its amount each tick for
+  // its dwell.
+  counter pulse_dwell: pwdw {
+    on pulse_tick -= 1;
+    wrap when neg(pwdw - 1) -> pulse_row;
+  }
+  handler pulse_next on pulse_row {
+    pwrow := L.pulse + u16(pulse_step.next);
+    load_pulse();
+  }
+  accum pulse_width: pw { step pulse_step.step; dir pwdir; on pulse_tick triangle; }
+
+  // The wave program: control byte per row, a row lasts the instrument's dwell.
+  latch ctrl := wave_ctrl[wtptr] on wave_tick;
+  counter wave_dwell: wtdw {
+    on wave_tick -= 1;
+    reload wtdwrel;
+    wrap when neg(wtdw - 1) -> wave_row;
+  }
+  handler wave_next on wave_row {
+    wtptr += 1;
+  }
+
+  accum portamento: portaacc { step portaslide; dir portadir; on porta_tick triangle; }
+
+  // Vibrato: a triangle whose depth ramps up, half a period at a time.
+  counter vib_half: vibwait {
+    on vib_tick -= 1;
+    reload vibperiod;
+    wrap when neg(vibwait - 1) -> vib_turn;
+  }
+  accum vibrato: vibacc { step vibstep; dir vibdir; on vib_tick triangle; on vib_turn flip; }
+  accum vib_ramp: vibbacc { step vibrate; on vib_tick ramp; }
+
+  proc load_pulse() {
+    pwdir := pulse_step.rate >> 7;
+    pwdw := pulse_step.rate & 0x7F;
+    let v = pulse_step.value;
+    if v != 0xFF {
+      pw := word(v & 0xF0, v & 0x0F);
     }
-    let idx = note << 1;
-    let cur = word(pitch[u16(idx)], pitch[u16(idx) + 1]);
-    let nxt = word(pitch[u16(idx) + 2], pitch[u16(idx) + 3]);
-    let d = nxt - cur;
-    vibdeltalo := lo(d);
-    scratch := hi(d) + vibbacc;
-    let k = vibdep - 1;
-    while !neg(k) bound 128 {
-      let val = word(vibdeltalo, scratch) >> 1;
-      scratch := hi(val);
-      vibdeltalo := lo(val);
-      k -= 1;
+  }
+
+  proc resolve_wave() {
+    match wave_note[wtptr] {
+      0x7E => wtptr -= 1;
+      0x7F => wtptr := wave_ctrl[wtptr];
     }
-    vibdwctr -= 1;
-    if neg(vibdwctr) {
-      vibdir ^= 1;
-      vibdwctr := vibdwrel;
-    }
-    if vibdir != 0 {
-      let bw = borrow(vibacclo, vibdeltalo);
-      vibacclo -= vibdeltalo;
-      vibacchi := vibacchi - scratch - u8(bw);
+  }
+
+  proc output() {
+    out_freq := freq;
+    out_pw := pw;
+    out_ad := ad;
+    out_sr := sr;
+    out_ctrl := ctrl & gate;
+    ported := 0;
+    vibed := 0;
+    quiet := 0;
+    cutoff_reg := cutoff;
+    modevol_reg := fmode | vol;
+  }
+
+  // The sound of one tick: the wave program picks the pitch, then slide or vibrato.
+  proc tone() {
+    resolve_wave();
+    let a = wave_note[wtptr];
+    if (instrument[inst].wave & 0x40) != 0 {
+      freq := u16(a) << 8;
     } else {
-      let cy = carry(vibacclo, vibdeltalo);
-      vibacclo += vibdeltalo;
-      vibacchi := vibacchi + scratch + u8(cy);
+      scratch := ite(neg(a), 1, 0);
+      freq := pitch[u16(ite(neg(a), a, a + note + trans) & 0x7F)] + u16(detune);
     }
-    let cy2 = carry(flo, vibacclo);
-    flo += vibacclo;
-    fhi := fhi + vibacchi + u8(cy2);
-    vibbacc += vibbstep;
-    blit();
-  }
-
-  proc porta() {
-    if portaen == 0 {
-      vibrato();
-      return;
-    }
-    if portadir != 0 {
-      let bw = borrow(portaacclo, portaslo);
-      portaacclo -= portaslo;
-      portaacchi := portaacchi - portashi - u8(bw);
-    } else {
-      let cy = carry(portaacclo, portaslo);
-      portaacclo += portaslo;
-      portaacchi := portaacchi + portashi + u8(cy);
-    }
-    if scratch == 0 {
-      let cy2 = carry(flo, portaacclo);
-      flo += portaacclo;
-      fhi := fhi + portaacchi + u8(cy2);
-    }
-    blit();
-  }
-
-  proc ctrl() {
-    ctrlsh := wave_ctrl[u16(wtptr)];
-    wtdw -= 1;
-    if neg(wtdw) {
-      wtdw := wtdwrel;
-      wtptr += 1;
-    }
-    porta();
-  }
-
-  proc freq_note() {
-    let yy = wtptr;
-    let nb = wave_note[u16(yy)];
-    let a = nb;
-    let hinote = false;
-    if neg(nb) {
-      hinote := true;
-    } elif nb == 0x7E {
-      wtptr -= 1;
-      yy := yy - 1;
-      a := wave_note[u16(yy)];
-      hinote := neg(a);
-    } elif nb == 0x7F {
-      let jt = wave_ctrl[u16(yy)];
-      wtptr := jt;
-      yy := jt;
-      stream program = L.wave_note + u16(jt) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
-      a := wave_note[u16(yy)];
-      hinote := neg(a);
-    }
-    let idx: u8 = 0;
-    if hinote {
-      idx := a << 1;
-      scratch := 1;
-    } else {
-      idx := ((a + note) << 1) + oct;
-      scratch := 0;
-    }
-    let cy = carry(pitch[u16(idx)], fine);
-    flo := pitch[u16(idx)] + fine;
-    fhi := pitch[u16(idx) + 1] + u8(cy);
-  }
-
-  proc freq() {
-    if (inst[u16(instn) + 2] & 0x40) != 0 {
-      let yy = wtptr;
-      let nb = wave_note[u16(yy)];
-      if nb == 0x7E {
-        wtptr -= 1;
-        yy := yy - 1;
-      } elif nb == 0x7F {
-        let jt = wave_ctrl[u16(yy)];
-        wtptr := jt;
-        yy := jt;
-        stream program = L.wave_note + u16(jt) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
+    fire wave_tick;
+    if porta_on != 0 {
+      fire porta_tick;
+      if scratch == 0 {
+        freq += portaacc;
       }
-      fhi := wave_note[u16(yy)];
-      flo := 0;
+    } elif vib_on != 0 && quiet == 0 {
+      let span = pitch[u16(note & 0x7F) + 1] - pitch[u16(note & 0x7F)];
+      vibstep := (span & 0xFF | u16(hi(span) + vibbacc) << 8) >> ite(neg(vibdep - 1), 0, vibdep);
+      scratch := hi(vibstep);
+      fire vib_tick;
+      freq += vibacc;
+    }
+    output();
+  }
+
+  proc start_instrument() {
+    let ins = inst;
+    wtptr := instrument[ins].wave_start;
+    stream program = L.wave_note + u16(wtptr) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
+    rearming := instrument[ins].wave & 0x80;
+    wtdw := instrument[ins].wave & 0x0F;
+    wtdwrel := instrument[ins].wave & 0x0F;
+    pwrow := L.pulse + u16(instrument[ins].pulse_start);
+    load_pulse();
+    scratch := instrument[ins].filter & 0xF0;
+    let route = instrument[ins].filter & 0x0F;
+    if route == 0 || route == 8 {
+      resfilt := resfilt & ~u8(1 << x);
     } else {
-      freq_note();
+      fmode := route << 4;
+      modevol_reg := fmode | vol;
+      resfilt := (resfilt & 0x0F) | (1 << x) | (instrument[ins].filter & 0xF0);
     }
-    ctrl();
+    resfilt_reg := resfilt;
+    if route != 0 {
+      fptr := L.filter + u16(instrument[ins].filter_start);
+      load_filter();
+    }
+    ad := instrument[ins].ad;
+    sr := s_sr;
+    out_ad := ad;
+    out_sr := sr;
+    out_ctrl := L.hardrestart;
   }
 
-  proc filt_sweep() {
-    flt_dw -= 1;
-    if neg(flt_dw) {
-      let nxt = fprog[u16(flt_cur) + 3];
-      flt_cur := nxt;
-      flt_dw := fprog[u16(nxt) + 2];
-      let rv = fprog[u16(nxt)];
-      if rv != 0xFF {
-        flt_cut := rv;
+  proc sound() {
+    fire pulse_tick;
+    if x == filter_voice {
+      fire filter_tick;
+    }
+    tone();
+  }
+
+  proc command_row(index: u8) {
+    let kind = command[index].kind;
+    let arg = command[index].arg;
+    scratch := kind & 0x0F;
+    match kind & 0xF0 {
+      0x00..0x20 => {
+        portadir := (kind >> 5) & 1;
+        portaslide := word(arg, kind & 0x0F);
+        s_porta := 1;
+        ported := 1;
       }
-    }
-    flt_cut += fprog[u16(flt_cur) + 1];
-  }
-
-  proc engine() {
-    pwdw -= 1;
-    if neg(pwdw) {
-      let nxt = pwprog[u16(pwcur) + 3];
-      pwcur := nxt;
-      let dr = pwprog[u16(nxt) + 2];
-      pwdir := dr & 0x80;
-      pwdw := dr & 0x7F;
-      let rs = pwprog[u16(nxt)];
-      if rs != 0xFF {
-        pwacclo := rs & 0xF0;
-        pwacchi := rs & 0x0F;
-      }
-    }
-    let step = pwprog[u16(pwcur) + 1];
-    if pwdir == 0 {
-      let cy = carry(pwacclo, step);
-      pwacclo += step;
-      pwacchi += u8(cy);
-    } else {
-      let bw = borrow(pwacclo, step);
-      pwacclo -= step;
-      pwacchi -= u8(bw);
-    }
-    if x == fprog[3] {
-      filt_sweep();
-    }
-    freq();
-  }
-
-  proc delayed() {
-    if delay_en != 0 {
-      vibsup := 1;
-      freq();
-    } else {
-      engine();
-    }
-  }
-
-  proc not_endpat() {
-    if ndelay != 0 {
-      delayed();
-      return;
-    }
-    gatemask := 0xFE;
-    if instflag != 0 {
-      sid[u16(stride) + 5] := rearm_ad;
-      adsh := rearm_ad;
-      sid[u16(stride) + 6] := rearm_sr;
-      srsh := rearm_sr;
-      blit();
-      return;
-    }
-    delayed();
-  }
-
-  proc advance() {
-    patcur += 1;
-    let nb = ind(0xFB, patcur);
-    if nb == 0x7F {
-      patcur := 0;
-      let cy = carry(ordlo, 1);
-      ordlo += 1;
-      zp_lo := ordlo;
-      ordhi += u8(cy);
-      zp_hi := ordhi;
-      let nxt = ind(0xFB, 0);
-      let aval = nxt;
-      if nxt == 0xFF {
-        ordlo := rstlo;
-        ordhi := rsthi;
-        aval := rsthi;
-      }
-      if aval == 0xFE {
-        active := 0;
-        sid[u16(stride) + 4] := 0;
-        return;
-      }
-    }
-  }
-
-  proc after() {
-    advance();
-    if active != 0 {
-      not_endpat();
-    }
-  }
-
-  proc note_byte(b: u8) {
-    if b == 0 {
-      ndelay += 1;
-      if gatemask != 0xFE {
-        stggate := 0xFE;
-        let ws2 = inst[u16(instn) + 7];
-        if ws2 != inst[u16(instn) + 6] {
-          wtptr := ws2;
-          stream program = L.wave_note + u16(wtptr) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
-        }
-      }
-      after();
-      return;
-    }
-    if b == 0x7E {
-      ndelay += 1;
-      stggate := 0xFF;
-      after();
-      return;
-    }
-    stgnote := b;
-    if portapend == 0 {
-      stgpen := 0;
-    }
-    if viben2 == 0 {
-      stgven := 0;
-    }
-    stggate := 0xFF;
-    after();
-  }
-
-  proc command(a: u8) {
-    let hi5 = a & 0xE0;
-    if hi5 == 0x80 {
-      ndelay := a & 0x10;
-      ndurrel := a & 0x0F;
-    } elif hi5 == 0xA0 {
-      let staged = a << 3;
-      stginst := staged;
-      adovr := inst[u16(staged) + 1];
-    } else {
-      let yidx = (a & 0x3F) << 1;
-      let paramlo = cmdparam[u16(yidx)];
-      scratch := paramlo & 0x0F;
-      let phi = paramlo & 0xF0;
-      let paramhi = cmdparam[u16(yidx) + 1];
-      if phi < 0x30 {
-        portadir := phi & 0x20;
-        portashi := scratch;
-        portaslo := paramhi;
-        stgpen := 1;
-        portapend := 1;
-      } elif phi == 0x60 {
-        stgven := 1;
-        viben2 := 1;
-        vibbstep := scratch;
-        let sp = paramhi >> 4;
-        vibdwrel := sp;
-        vibdwctr := sp - 1;
+      0x60 => {
+        s_vib := 1;
+        vibed := 1;
+        vibrate := kind & 0x0F;
+        vibperiod := arg >> 4;
+        vibwait := (arg >> 4) - 1;
         vibdir := 0;
         vibbacc := 0;
-        vibacclo := 0;
-        vibacchi := 0;
-        vibdep := paramhi & 0x0F;
-      } elif phi == 0xE0 {
-        tempo_rel := paramhi;
-      } elif phi == 0xF0 {
-        vol := paramhi;
-      } elif phi == 0x90 {
-        adovr := paramhi;
-      } else {
-        let yy = (paramlo & 0x1F) << 3;
-        inst[u16(yy) + 6] := paramhi;
-        inst[u16(yy) + 7] := paramhi;
+        vibacc := 0;
+        vibdep := arg & 0x0F;
       }
-    }
-    patcur += 1;
-  }
-
-  proc fetch() {
-    zp_lo := ordlo;
-    zp_hi := ordhi;
-    stream order = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:orderlist";
-    ndelay := 0;
-    let a = ind(0xFB, 0);
-    if neg(a) {
-      stgtr := a << 1;
-      let lo1 = ordlo + 1;
-      if lo1 == 0 {
-        ordhi += 1;
-      }
-      ordlo := lo1;
-      a := ind(0xFB, 1);
-    }
-    zp_lo := patlo[u16(a)];
-    zp_hi := pathi[u16(a)];
-    stream rows = word(zp_lo, zp_hi) @ 0 grammar "pyjch.grammar:GRAMMAR:pattern";
-    while true bound 256 {
-      let byte = ind(0xFB, patcur);
-      if neg(byte) {
-        command(byte);
-      } else {
-        note_byte(byte);
-        return;
+      0xE0 => tempo := arg;
+      0xF0 => vol := arg;
+      0x90 => s_sr := arg;
+      _ => {
+        instrument[kind & 0x1F].wave_start := arg;
+        instrument[kind & 0x1F].wave_release := arg;
       }
     }
   }
 
-  proc inst_init() {
-    let y = instn;
-    wtptr := inst[u16(y) + 6];
-    stream program = L.wave_note + u16(wtptr) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
-    let wf = inst[u16(y) + 2];
-    instflag := wf & 0x80;
-    wtdw := wf & 0x0F;
-    wtdwrel := wf & 0x0F;
-    let pwstart = inst[u16(y) + 5];
-    pwcur := pwstart;
-    let pr = pwprog[u16(pwstart)];
-    if pr != 0xFF {
-      pwacclo := pr & 0xF0;
-      pwacchi := pr & 0x0F;
+  proc read_note(b: u8) {
+    match b {
+      0 => {
+        tie += 1;
+        if gate != 0xFE {
+          s_gate := 0xFE;
+          if instrument[inst].wave_release != instrument[inst].wave_start {
+            wtptr := instrument[inst].wave_release;
+            stream program = L.wave_note + u16(wtptr) @ 0 grammar "pyjch.grammar:GRAMMAR:wave_program";
+          }
+        }
+      }
+      0x7E => {
+        tie += 1;
+        s_gate := 0xFF;
+      }
+      _ => {
+        s_note := b;
+        if ported == 0 {
+          s_porta := 0;
+        }
+        if vibed == 0 {
+          s_vib := 0;
+        }
+        s_gate := 0xFF;
+      }
     }
-    let dr = pwprog[u16(pwstart) + 2];
-    pwdir := dr & 0x80;
-    pwdw := dr & 0x7F;
-    let fm = inst[u16(y) + 3];
-    scratch := fm & 0xF0;
-    let route = fm & 0x0F;
-    let yflag: u8 = 0;
-    let a: u8 = 0;
-    if route == 0 {
-      a := resfilt & routeclr;
-    } elif route == 0x08 {
-      yflag := 1;
-      a := resfilt & routeclr;
+  }
+
+  // The row read two ticks ahead: instrument, duration and commands up to a note; the order
+  // list moves on when the pattern's next byte is its end.
+  handler read_row on fetch {
+    tie := 0;
+    if neg(orderlist.ahead) {
+      react orderlist on order_byte();
+    }
+    let noted = false;
+    while !noted bound 256 {
+      react pattern on pattern_byte();
+      let b = item;
+      match b {
+        0x80..0x9F => {
+          tie := b & 0x10;
+          length := b & 0x0F;
+        }
+        0xA0..0xBF => {
+          s_inst := b & 0x1F;
+          s_sr := instrument[b & 0x1F].sr;
+        }
+        0xC0..0xFF => command_row(b & 0x3F);
+        _ => {
+          noted := true;
+          read_note(b);
+        }
+      }
+    }
+    if pattern.ahead == 0x7F {
+      fire pattern_end;
+    }
+    started := true;
+    if active != 0 {
+      if tie == 0 {
+        gate := 0xFE;
+      }
+      if tie == 0 && rearming != 0 {
+        ad := rearm_ad;
+        sr := rearm_sr;
+        output();
+      } elif delay != 0 {
+        quiet := 1;
+        tone();
+      } else {
+        sound();
+      }
+    }
+  }
+
+  handler next_pattern on pattern_end {
+    react orderlist on order_byte();
+    if orderlist.ahead == 0xFF {
+      orderpos := loop;
+    } elif orderlist.ahead == 0xFE {
+      active := 0;
+      out_ctrl := 0;
+    }
+  }
+
+  // A new note takes the staged row; a tied one only goes on sounding.
+  handler note_start on note {
+    started := true;
+    gate := s_gate;
+    note := s_note;
+    trans := s_trans;
+    vib_on := s_vib;
+    inst := s_inst;
+    porta_on := s_porta;
+    if s_porta == 0 {
+      portaacc := 0;
+    }
+    if tie != 0 {
+      sound();
     } else {
-      flt_mode := route << 4;
-      sid[0x18] := (route << 4) | vol;
-      yflag := 1;
-      a := (resfilt & 0x0F) | routeset | scratch;
-      if a == 0 {
-        yflag := 2;
-        a := resfilt & routeclr;
-      }
-    }
-    sid[0x17] := a;
-    resfilt := a;
-    if yflag == 1 {
-      let fp = inst[u16(y) + 4];
-      flt_cur := fp;
-      let rv = fprog[u16(fp)];
-      if rv != 0xFF {
-        flt_cut := rv;
-      }
-      flt_dw := fprog[u16(fp) + 2];
-    }
-    let ad = inst[u16(y)];
-    sid[u16(stride) + 5] := ad;
-    adsh := ad;
-    let sr = adovr;
-    sid[u16(stride) + 6] := sr;
-    srsh := sr;
-    sid[u16(stride) + 4] := L.hardrestart;
-  }
-
-  proc commit() {
-    gatemask := stggate;
-    note := stgnote;
-    oct := stgtr;
-    viben := stgven;
-    instn := stginst;
-    portaen := stgpen;
-    if stgpen == 0 {
-      portaacclo := 0;
-      portaacchi := 0;
-    }
-    ndur := ndurrel;
-    if ndelay != 0 {
-      engine();
-    } else {
-      inst_init();
-    }
-  }
-
-  proc run() {
-    if active == 0 {
-      return;
-    }
-    if grv_ctr == 0 {
-      ndur -= 1;
-      if neg(ndur) {
-        commit();
-      } else {
-        engine();
-      }
-    } elif grv_ctr == 2 {
-      if ndur == 0 {
-        fetch();
-      } else {
-        engine();
-      }
-    } else {
-      engine();
+      start_instrument();
     }
   }
 
   step {
-    run();
+    if active != 0 {
+      if groove_ctr == 0 {
+        fire row;
+      } elif groove_ctr == 2 && remaining == 0 {
+        fire fetch;
+      }
+      if !started {
+        sound();
+      }
+    }
   }
 }
 
 schedule {
-  enter;
   clock;
   voice[2];
   voice[1];
   voice[0];
-  leave;
 }

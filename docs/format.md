@@ -14,11 +14,11 @@ the demoscene. `pyjch` reads it at three levels:
   [`v0x.play`](../src/pyjch/specs/v0x.play).
 - **Byte-exact V20 player** — the `JCH_NewPlayer_V20` two-column wavetable
   engine (largest HVSC bucket): `pyjch.player.JchPlayer` runs the playspec
-  [`newplayer.play`](../src/pyjch/specs/newplayer.play) on the memory the tune's
-  own init leaves. It replays the tunes that are the reference V20 code build,
-  each validated frame-exact against the `sidtrace` register oracle and
-  memory-exact against the tune's own 6502 run.
-  `pyjch.player.playable(model)` is the soundness gate.
+  [`newplayer.play`](../src/pyjch/specs/newplayer.play), started from what the
+  tune's own init leaves. It replays the tunes that are the reference V20 code build
+  and that [`pyjch.refusal`](../src/pyjch/refusal.py) does not refuse, each validated
+  frame-exact against the `sidtrace` register oracle and variable-exact against the
+  tune's own 6502 run. `pyjch.player.playable(model)` is the soundness gate.
 - **Model reader** — the remaining JCH NewPlayer *wavetable family*
   (V1/V2/V5/V6/V8/V9/V10/V11/V12/V13/V14/V15/V17/V18 and V20 sub-builds, ~2,000 HVSC
   tunes): `parse` returns a `NewPlayerModel` recovering the song DATA
@@ -151,33 +151,52 @@ subset:
 | 1st Chaff | — | V17 | EmuPlayer | **byte-exact** |
 
 `playable()` admits only the reference V20 build to the spec player: the work-cell
-and table idioms must resolve, and the code the spec states but the SID registers
-do not show (the saved zero-page pointer, the filter-program start) must match.
-A build that differs there is gated out as `code-differs`; every other recovered
-version plays byte-exactly through `EmuPlayer`, so no tune is silently mis-played.
+and table idioms must resolve, and the code the SID registers do not show (the saved
+zero-page pointer, the filter-program start) must match. A build that differs there is
+gated out as `code-differs`; every other recovered version plays byte-exactly through
+`EmuPlayer`, so no tune is silently mis-played.
 
-### Proofs
+### The spec's state
 
-Besides the oracle runs, `tests/test_specplayer.py` proves with
-`pysidtracker.playspec.tv.validate` that three spec routines leave exactly what the
-tune's 6502 code leaves, for all initial memory, in each V20 oracle tune:
-`voice[0].inst_init` (the instrument start: wave pointer, pulse and filter
-programs, AD/SR and hard restart), `voice[0].blit` (the output stage that writes
-every SID register) and `voice[0].advance` (the row advance: the pattern cursor,
-the order-list step with its `$FF` restart, and the `$FE` stop that silences the
-voice). A changed spec is refuted with a counterexample that replays.
+Every play variable (counters, positions, durations, the staged row, the pulse, wave,
+portamento and vibrato registers, the filter) is spec `state` with no address, started
+from the byte the tune's init left in the player's work area. `JchPlayer.state(name)` and
+`set_state(name, value)` read and set one: `tempo`, `vol`, `voice[x].remaining`,
+`voice[x].orderpos`, and so on. Positions in the order list and pattern are cursors over
+their streams; the pulse and filter programs are views at a pointer into their table;
+a voice's instrument, transpose and pulse direction are held as an index, half steps and
+a flag bit, not as the byte the 6502 keeps (`pyjch.constants.VARIABLE_SHIFTS`).
+`pyjch.player.play_variables` names the work-area byte of each, so a run can be compared
+with the tune's own 6502 (`tests/test_specplayer.py`, `-m oracle`).
 
-`advance` is a stretch of the play routine, run to the start of `not_endpat`. The
-stop path leaves the stretch by jumping to the voice epilogue; the test points that
-one jump at `not_endpat` so every path reaches the stop, and the stop path's own
-writes are still compared.
+### Refused tunes
 
-The pattern-command and vibrato routines are not proved. They contain the vibrato
-shift loop, a counted loop of up to 128 iterations with an unconditional
-back-edge. Since pysidtracker 0.45.0
-([#148](https://github.com/anarkiwi/pysidtracker/issues/148)) the validator no
-longer unrolls it without end, but the solver has not finished either routine in
-tens of minutes.
+The spec keeps no variable in memory, so a tune whose song data reads or writes one as
+memory is played by `EmuPlayer` instead (`pyjch.refusal`, the `v20_gate` facet):
+
+| Reason | Fact |
+| ------ | ---- |
+| `voice-registers` | a voice's SID registers are not `7 * voice` on, or its filter masks are not `1 << voice` (cells `$740`-`$745` and `$73A`-`$73F` from the code base) |
+| `variables-over-data` | a table the spec reads lies over a byte the player writes |
+| `pitch-past-table` | the song can select a note past the pitch table's 96, whose next bytes are the player's variables: the sum of a pattern note, the order list's transpose and a row of the instrument's wave program, taken modulo 128, reaches 96 within the program's first rows, or an absolute row names a note from 96 |
+| `song-unparsed` | the song's streams do not parse, so what it can reach is not known |
+
+`pitch-past-table` is conservative: it follows each voice's notes, transposes and
+instruments through the order lists and bounds how far a wave program runs in a note's
+ticks, so it refuses tunes whose wave program would not reach the row in time. The
+refused HVSC tunes are listed in `tests/fixtures/jch_refused.txt`
+(`scripts/spec_tunes.py` writes it); `tests/test_refusal.py` checks each against its
+reason in the `oracle` job.
+
+### Checking a spec against a recording
+
+`scripts/spec_tunes.py HVSC TUNES.csv OUT` lists the tunes each spec plays (and the refused
+ones) from a survey `find` CSV. With pysidtracker's `tools/spec_trace.py`,
+`record REF.pkl.gz OLD.play OUT/newplayer.csv` plays a spec over them and
+`check REF.pkl.gz NEW.play OUT/newplayer.csv` compares what is audible and exits with the
+number of tunes that differ (a tune the new spec refuses counts as one).
+`scripts/spec_diff.py` shows the first differing registers of one tune and
+`scripts/spec_check.py` prints the static diagnostics of a spec bound to a tune.
 
 `pysidtracker equiv A B` exits 0 when two NewPlayer tunes play the same song: it
 compares the chosen subtune's order lists with the patterns they reach renumbered

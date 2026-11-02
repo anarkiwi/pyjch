@@ -1,32 +1,36 @@
 """The V20 playspec: static checks, and the grid it plays on the synthetic tune."""
 
 import hashlib
-from pathlib import Path
 
 import numpy as np
 import pytest
 from pysidtracker import EmuPlayer
-from pysidtracker.playspec import elaborate, parse
-from pysidtracker.playspec.tv import replay, validate
+from pysidtracker.playspec import elaborate
 from pysidtracker.testing import song_frames, whole_song
 
 import pyjch
 from pyjch import reader
-from pyjch.newplayer import abs_tokens, find_site
 from pyjch.cli_plugin import FORMAT
-from pyjch.player import JchPlayer, make_player, playable, spec, v20_layout, v0x_layout
+from pyjch.player import (
+    JchPlayer,
+    make_player,
+    play_variables,
+    playable,
+    spec,
+    v20_layout,
+    v0x_layout,
+)
 
 from tests import _synth_v20 as synth
 from tests.test_oracle_hvsc import TUNES
 
-STACK = slice(0x100, 0x200)
 SPEC_TUNES = {
     name: rel for name, rel in TUNES.items() if name.startswith(("v0x", "v20"))
 }
 
 # Digest of the grid the hand-written V20 engine played on this image over
 # SYNTH_FRAMES calls, many passes of every order list.
-SYNTH_GRID_DIGEST = "314207ef13679a7c70b68514fd1732c8"
+SYNTH_GRID_DIGEST = "5fcf08ec2942390031fc4bd785a5ad74"
 SYNTH_FRAMES = whole_song(6000)
 
 
@@ -34,15 +38,19 @@ def _model():
     return reader.parse(synth.build_psid())
 
 
+def _layout(model):
+    return v20_layout(model, playable(model), JchPlayer(model).view())
+
+
 def test_spec_elaborates_against_the_synthetic_layout():
     model = _model()
-    program = elaborate(spec("newplayer"), v20_layout(model, playable(model)))
+    program = elaborate(spec("newplayer"), _layout(model))
     assert program.name == "newplayer"
 
 
 def test_v0x_spec_elaborates_against_a_song_layout(hvsc):
     song = reader.read(hvsc(TUNES["v0x_flexible"]))
-    program = elaborate(spec("v0x"), v0x_layout(song))
+    program = elaborate(spec("v0x"), v0x_layout(song, JchPlayer(song).view()))
     assert program.name == "v0x"
 
 
@@ -57,7 +65,8 @@ def test_format_exports_the_spec():
     model = _model()
     bound = FORMAT.spec(model)
     assert bound.spec is spec("newplayer")
-    assert elaborate(bound.spec, bound.bind(None, None)).name == "newplayer"
+    view = JchPlayer(model).view()
+    assert elaborate(bound.spec, bound.bind(view, None)).name == "newplayer"
     assert FORMAT.spec_player(model).render_grid(SYNTH_FRAMES) == (
         make_player(model).render_grid(SYNTH_FRAMES)
     )
@@ -69,129 +78,56 @@ def test_format_has_no_spec_for_an_emulated_build(monkeypatch):
         FORMAT.spec(_model())
 
 
-@pytest.mark.oracle
-@pytest.mark.parametrize("relpath", SPEC_TUNES.values(), ids=list(SPEC_TUNES))
-def test_memory_equals_the_6502_run_after_every_call(relpath, hvsc):
-    """Outside the stack page the 64 KiB is the tune's own 6502 run, each call."""
-    data = hvsc(relpath).read_bytes()
-    model = reader.parse(data)
+def test_the_play_variables_are_the_specs_state():
+    """Every state the 6502 keeps in its work area is the spec's, and the spec adds only
+    the positions of its cursors and the orderlist restart."""
+    model = _model()
+    player = JchPlayer(model)
+    player.play_frame()
+    named = {name for name, _ in play_variables(playable(model), 0, lambda _addr: 0)}
+    states = set(player.program().keys.values())
+    assert named <= states
+    assert {name.split(".")[-1] for name in states - named} == {
+        "start",
+        "loop",
+        "orderpos",
+        "item",
+    }
+
+
+def _state_differences(model, calls):
+    """The first call at which the spec's state differs from the work area of the tune's own
+    6502 run, with the variables that differ."""
     player = make_player(model)
-    assert isinstance(player, JchPlayer)
+    if not isinstance(player, JchPlayer):
+        pytest.skip("the spec refuses this tune")
     emu = EmuPlayer(
         model.image, model.load_addr, model.init_addr, model.play_addr, model.subtune
     )
-    for call in range(song_frames(data, None)):
+    bases = playable(model)
+    base = model.init_addr
+    for call in range(calls):
         player.play_frame()
         emu.play_frame()
-        ours = bytearray(player.memory)
-        theirs = bytearray(emu._mem)  # pylint: disable=protected-access
-        ours[STACK] = theirs[STACK] = bytes(0x100)
-        if ours != theirs:
-            where = next(a for a in range(0x10000) if ours[a] != theirs[a])
-            pytest.fail(
-                f"call {call}: ${where:04X} is {ours[where]:#04x}, "
-                f"the 6502 left {theirs[where]:#04x}"
-            )
-
-
-V20_TUNES = {name: rel for name, rel in TUNES.items() if name.startswith("v20")}
-# Where each proved routine begins in the 6502 code: its first instructions, with the
-# per-voice work cells (offsets from the code base) written as operands.
-ROUTINES = {
-    "inst_init": "BC {instn} B9 {{op:w}} 9D {wtptr}",
-    "blit": "A9 00 9D {portapend} 9D {viben2} 9D {vibsup}",
-    "advance": "FE {patcur} BC {patcur} B1 FB C9 7F",
-}
-# The row advance ends where the order list stops the voice or hands the row to
-# ``not_endpat``; the stretch is run to ``not_endpat`` with the stop path's exit to the
-# voice epilogue (its final ``JMP``) redirected there.
-ADVANCE_EXIT = (
-    "C9 FE D0 0E A9 00 9D {active} BC {stride} 99 04 D4 4C {{exit:w}} BD {ndelay}"
-)
-ADVANCE_EXIT_AT = 16
-ADVANCE_STOP_AT = 18
-CELLS = {
-    "active": 0x006,
-    "stride": 0x740,
-    "ndelay": 0x748,
-    "patcur": 0x751,
-    "instn": 0x01D,
-    "wtptr": 0x795,
-    "portapend": 0x760,
-    "viben2": 0x763,
-    "vibsup": 0x766,
-}
-
-
-def _routine(hvsc, relpath, name):
-    """``(model, image, pc, stop)``: the tune and where its ``name`` code begins.
-
-    From there the 6502 code runs to the play routine's final ``RTS``, or to ``stop``.
-    """
-    model = reader.parse(hvsc(relpath).read_bytes())
-    cells = {cell: abs_tokens(model.init_addr + off) for cell, off in CELLS.items()}
-    site = find_site(model.sid, ROUTINES[name].format(**cells))
-    image = bytearray(0x10000)
-    image[model.load_addr : model.load_addr + len(model.image)] = model.image
-    stop = None
-    if name == "advance":
-        leave = find_site(model.sid, ADVANCE_EXIT.format(**cells))
-        stop = leave.addr + ADVANCE_STOP_AT
-        image[leave.addr + ADVANCE_EXIT_AT : leave.addr + ADVANCE_STOP_AT] = (
-            stop.to_bytes(2, "little")
-        )
-    return model, bytes(image), site.addr, stop
+        theirs = emu._mem  # pylint: disable=protected-access
+        wrong = {
+            name: (want, player.state(name))
+            for name, want in play_variables(bases, base, theirs.__getitem__)
+            if player.state(name) != want
+        }
+        if wrong:
+            return call, wrong
+    return None
 
 
 @pytest.mark.oracle
-@pytest.mark.parametrize("name", ROUTINES)
-@pytest.mark.parametrize("relpath", V20_TUNES.values(), ids=list(V20_TUNES))
-def test_a_routine_is_proved_equal_to_the_6502_code(name, relpath, hvsc):
-    """For all initial memory, ``voice[0].<name>`` leaves what the 6502 code leaves."""
-    model, image, pc, stop = _routine(hvsc, relpath, name)
-    layout = v20_layout(model, playable(model))
-    result = validate(
-        spec("newplayer"),
-        layout,
-        f"voice[0].{name}",
-        image,
-        pc,
-        registers={"X": 0},
-        stop=stop,
-    )
-    assert result.proven, result.counterexample
-
-
-@pytest.mark.oracle
-def test_a_changed_spec_is_refuted_and_the_counterexample_replays(hvsc):
-    model, image, pc, _stop = _routine(hvsc, V20_TUNES["v20_7d_funkt"], "inst_init")
-    layout = v20_layout(model, playable(model))
-    text = (Path(pyjch.__file__).parent / "specs" / "newplayer.play").read_text()
-    broken = parse(
-        text.replace(
-            "sid[u16(stride) + 4] := L.hardrestart;",
-            "sid[u16(stride) + 4] := L.hardrestart ^ 1;",
-        )
-    )
-    result = validate(
-        broken, layout, "voice[0].inst_init", image, pc, registers={"X": 0}
-    )
-    assert not result.proven
-    cex = result.counterexample
-    diffs = replay(broken, layout, "voice[0].inst_init", cex["memory"], pc, {"X": 0})
-    assert diffs == [cex["address"]]
-
-
-@pytest.mark.oracle
-def test_a_changed_row_advance_is_refuted(hvsc):
-    model, image, pc, stop = _routine(hvsc, V20_TUNES["v20_7d_funkt"], "advance")
-    layout = v20_layout(model, playable(model))
-    text = (Path(pyjch.__file__).parent / "specs" / "newplayer.play").read_text()
-    broken = parse(text.replace("ordhi += u8(cy);", "ordhi += u8(cy) ^ 1;"))
-    result = validate(
-        broken, layout, "voice[0].advance", image, pc, registers={"X": 0}, stop=stop
-    )
-    assert not result.proven
+@pytest.mark.parametrize("relpath", SPEC_TUNES.values(), ids=list(SPEC_TUNES))
+def test_the_spec_state_is_the_6502_work_area_after_every_call(relpath, hvsc):
+    data = hvsc(relpath).read_bytes()
+    model = reader.parse(data)
+    if not isinstance(model, pyjch.newplayer.NewPlayerModel):
+        pytest.skip("the V0x routine keeps its variables apart from the work area")
+    assert _state_differences(model, song_frames(data, None)) is None
 
 
 PATTERN_RULE = "pyjch.grammar:GRAMMAR:pattern"
@@ -215,7 +151,8 @@ def test_every_stream_the_spec_opens_on_the_synthetic_tune_is_well_formed():
     assert validator.failures() == {}
 
 
-def test_a_pattern_without_a_terminator_is_reported():
+def test_a_pattern_without_a_terminator_is_reported(monkeypatch):
+    monkeypatch.setattr("pyjch.refusal.refusal", lambda model, bases: None)
     data = bytearray(synth.build_psid())
     start = len(data) - (synth.IMAGE_LEN - (synth.PATTERNS - synth.LOAD))
     data[start : start + 0x100] = bytes([0x30]) * 0x100
