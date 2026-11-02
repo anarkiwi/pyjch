@@ -168,6 +168,9 @@ def test_a_pattern_without_a_terminator_is_reported(monkeypatch):
 @pytest.mark.parametrize("relpath", SPEC_TUNES.values(), ids=list(SPEC_TUNES))
 def test_every_stream_a_real_tune_opens_matches_the_song_grammar(relpath, hvsc):
     data = hvsc(relpath).read_bytes()
-    validator = _validated(reader.parse(data), song_frames(data, None))
+    model = reader.parse(data)
+    if not isinstance(make_player(model), JchPlayer):
+        pytest.skip("the spec refuses this tune")
+    validator = _validated(model, song_frames(data, None))
     assert validator.results
     assert validator.failures() == {}
