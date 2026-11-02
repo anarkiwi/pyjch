@@ -113,9 +113,33 @@ SHARED_BYTES = {
     "fdwell": 0x791,
     "cutoff": 0x792,
     "fmode": 0x793,
+    "vibdelta": 0x72D,
 }
-# Work-area bytes the 6502 player writes that the spec leaves out: the vibrato's temporary.
-TEMPORARIES = (0x72D,)
+# The pitch table's 96 notes end where the variables begin; a note index of seven bits (and the
+# vibrato's read of the next note) reaches PITCH_TAIL bytes past it.  Each byte there that is a
+# variable the spec writes is named by the kind below (kind * 4 + voice in the layout's ``wild``).
+NOTES = 96
+PITCH_TAIL = 66
+WILD_KINDS = (
+    "vibdelta",
+    ("start", 0),
+    ("start", 1),
+    "groove_ctr",
+    "tempo",
+    "tie",
+    "vib_on",
+    "porta_on",
+    "patpos",
+    "rearming",
+    "length",
+    "remaining",
+    "ctrl",
+    "ported",
+    "vibed",
+    "quiet",
+    "vibwait",
+    "vibperiod",
+)
 # The V0x player's play variables, offsets from the load address.
 V0X_BYTES = {
     "left": 0x2F9,
@@ -145,6 +169,4 @@ VOICE_REGISTERS = 0x740
 # Why the V20 spec cannot play a V20 code build (see pyjch.refusal).
 VOICE_CELLS = "voice-registers"
 OVERLAP = "variables-over-data"
-PITCH_REACH = "pitch-past-table"
-SONG_UNPARSED = "song-unparsed"
-SPEC_REFUSALS = (VOICE_CELLS, OVERLAP, PITCH_REACH, SONG_UNPARSED)
+SPEC_REFUSALS = (VOICE_CELLS, OVERLAP)

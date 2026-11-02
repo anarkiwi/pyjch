@@ -31,6 +31,8 @@ from pysidtracker.formats import SpecBinding
 from pysidtracker.playspec import SpecPlayer, load
 
 from pyjch.constants import (
+    NOTES,
+    PITCH_TAIL,
     SHARED_BYTES,
     SPEC_REFUSALS,
     V0X_BYTES,
@@ -40,6 +42,7 @@ from pyjch.constants import (
     VARIABLE_SHIFTS,
     VOICE_BYTES,
     VOICE_WORDS,
+    WILD_KINDS,
 )
 from pyjch.errors import SidParseError
 from pyjch.model import Song
@@ -268,7 +271,29 @@ def v20_layout(model, bases: V20Bases, view: bytes) -> dict:
             for n, (lo, hi) in VOICE_WORDS.items()
         }
     )
+    layout["wild"] = pitch_tail(bases.pitch, base)
     return layout
+
+
+def pitch_tail(pitch: int, base: int) -> list:
+    """For each byte past the 96-note pitch table at ``pitch``, the kind of variable (see
+    ``WILD_KINDS``) the work area at ``base`` keeps there, times four, plus its voice.
+    """
+    tail = pitch + 2 * NOTES - base
+    wild = [0] * PITCH_TAIL
+    for code, kind in enumerate(WILD_KINDS, 1):
+        name, lane = kind if isinstance(kind, tuple) else (kind, None)
+        if lane is not None:
+            offsets = [VOICE_WORDS[name][lane]] * 3
+        elif name in SHARED_BYTES:
+            offsets = [SHARED_BYTES[name]]
+        else:
+            offsets = [VOICE_BYTES[name]] * 3
+        for voice, offset in enumerate(offsets):
+            at = offset + (voice if len(offsets) == 3 else 0) - tail
+            if 0 <= at < PITCH_TAIL:
+                wild[at] = code * 4 + (voice if len(offsets) == 3 else 0)
+    return wild
 
 
 def play_variables(

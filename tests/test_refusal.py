@@ -7,22 +7,19 @@ import pytest
 
 from pyjch import reader
 from pyjch.errors import SidParseError
-from pyjch.constants import (
-    OVERLAP,
-    PITCH_REACH,
-    SONG_UNPARSED,
-    SPEC_REFUSALS,
-    VOICE_CELLS,
-)
+from pyjch.constants import OVERLAP, SPEC_REFUSALS, VOICE_CELLS, WILD_KINDS
+from pysidtracker.playspec import SpecPlayer
 from pyjch.player import (
     JchPlayer,
+    spec_binding,
+    pitch_tail,
     engine_of,
     make_player,
     spec_gate,
     v0x_refused,
     v20_bases,
 )
-from pyjch.refusal import _past, refusal
+from pyjch.refusal import refusal
 from pysidtracker import EmuPlayer
 
 from tests import _synth_v20 as synth
@@ -68,11 +65,6 @@ def test_a_table_over_a_variable_is_refused():
     assert refusal(model, bases) == OVERLAP
 
 
-def test_a_song_that_does_not_parse_is_refused():
-    model = _model([(synth.PATTERNS, bytes([0x30]) * 0x100)])
-    assert spec_gate(model) == (None, SONG_UNPARSED)
-
-
 def test_a_v0x_voice_whose_registers_are_not_seven_apart_is_refused(hvsc):
     song = reader.read(hvsc(V0X_REFERENCES[0]))
     assert not v0x_refused(song)
@@ -87,29 +79,53 @@ def test_a_v0x_voice_whose_registers_are_not_seven_apart_is_refused(hvsc):
         JchPlayer(moved)
 
 
-@pytest.mark.parametrize(
-    "row,reason", [(0xDF, "reference"), (0xE0, PITCH_REACH), (0x60, PITCH_REACH)]
-)
-def test_a_wave_row_past_the_ninety_six_notes_is_refused(row, reason):
-    """Row 0 starts the first instrument and is where the voices' wave pointers are."""
-    model = _model([(synth.WAVE_NOTE, bytes([row]))])
-    assert spec_gate(model)[1] == reason
-    assert engine_of(make_player(model)) == ("v20" if reason == "reference" else "emu")
+def test_a_wave_row_past_the_table_is_played_by_the_spec():
+    model = _model([(synth.WAVE_NOTE, bytes([0xE0, 0x60]))])
+    assert engine_of(make_player(model)) == "v20"
 
 
-@pytest.mark.parametrize(
-    "rows,shift,past",
-    [
-        (1 << 60, 35, False),
-        (1 << 60, 36, True),
-        (1 << 100, 28, False),
-        (1 << 95, 1, True),
-        (1 << (128 + 95), 0, False),
-        (1 << (128 + 96), 0, True),
-    ],
-)
-def test_a_note_lands_past_the_table_by_its_sum_modulo_128(rows, shift, past):
-    assert _past(rows, shift) is past
+def test_the_pitch_tail_names_the_variable_at_each_byte_past_the_table():
+    base = 0x1000
+    wild = pitch_tail(base + 0x66D, base)
+    assert len(wild) == 66 and wild[0] == WILD_KINDS.index("vibdelta") + 1 << 2
+    tempo = 0x747 - 0x72D
+    assert wild[tempo] == (WILD_KINDS.index("tempo") + 1) << 2
+    vibperiod = (WILD_KINDS.index("vibperiod") + 1) << 2
+    assert [wild[0x76C - 0x72D + v] for v in range(3)] == [
+        vibperiod + v for v in range(3)
+    ]
+    assert pitch_tail(0x3000, base) == [0] * 66
+
+
+@pytest.mark.parametrize("row", [0x60, 0xE0])
+def test_a_wave_row_past_the_ninety_six_notes_plays_the_variable_there(row):
+    """Rows 0 and 1 are where the voices' wave pointers are in the first calls: note 96, relative
+    ($60) or absolute ($E0), is the word of the vibrato temporary and the low byte of voice 0's
+    order pointer, as it is when the pitch table is followed by the variables."""
+    model = _model([(synth.WAVE_NOTE, bytes([row, row]))])
+    bound = spec_binding(model)
+
+    def bind(view, entry):
+        layout = bound.bind(view, entry)
+        layout["wild"] = pitch_tail(layout["pitch"], layout["pitch"] + 192 - 0x72D)
+        return layout
+
+    player = SpecPlayer(
+        bound.spec,
+        model.image,
+        model.load_addr,
+        model.init_addr,
+        model.play_addr,
+        0,
+        bind=bind,
+    )
+    player.play_frame()
+    player.play_frame()
+    order = player.state("voice[0].start") + player.state("voice[0].orderpos")
+    want = player.state("vibdelta") | (order & 0xFF) << 8
+    assert want == 256
+    regs = player.snapshot()
+    assert regs[14] | regs[15] << 8 == want + player.state("voice[2].detune")
 
 
 def test_the_fixture_names_a_reason_the_binder_gives():
